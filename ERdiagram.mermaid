@@ -1,0 +1,121 @@
+erDiagram
+
+    %% ─────────────────────────────────────────
+    %% CORE TABLES
+    %% ─────────────────────────────────────────
+
+    projects {
+        TEXT id PK "uuid"
+        TEXT name "repo or folder name"
+        TEXT path "absolute path on disk"
+        TEXT git_remote UK "canonical cross-machine ID, nullable"
+        TEXT path_hash UK "sha256 of path, fallback ID"
+        TEXT memory_doc "Layer 3 markdown document"
+        INTEGER updated_at "unix timestamp ms"
+        INTEGER created_at "unix timestamp ms"
+    }
+
+    sessions {
+        TEXT id PK "uuid"
+        TEXT project_id FK "→ projects.id"
+        TEXT tool "claude-code | codex | gemini | opencode"
+        INTEGER started_at "unix timestamp ms"
+        INTEGER ended_at "nullable, unix timestamp ms"
+        INTEGER last_seen_at "heartbeat, unix timestamp ms"
+        TEXT outcome "completed | interrupted | crashed | null"
+        INTEGER exit_code "nullable"
+        TEXT goal "extracted from Layer 1, nullable"
+        TEXT keywords "JSON array of strings"
+        BLOB embedding "Float32Array, nullable, sqlite-vec"
+        INTEGER message_count "total messages in session"
+        INTEGER duration_seconds "nullable"
+    }
+
+    %% ─────────────────────────────────────────
+    %% EVENTS TABLE
+    %% ─────────────────────────────────────────
+
+    events {
+        TEXT id PK "uuid"
+        TEXT session_id FK "→ sessions.id"
+        TEXT type "EventType enum value"
+        TEXT payload "JSON — typed per event type"
+        REAL weight "0.0 to 1.0"
+        INTEGER timestamp "unix timestamp ms"
+        TEXT source "hook | mcp"
+    }
+
+    %% ─────────────────────────────────────────
+    %% DIGESTS TABLE
+    %% ─────────────────────────────────────────
+
+    digests {
+        TEXT id PK "uuid"
+        TEXT session_id FK "→ sessions.id, UNIQUE"
+        TEXT goal "extracted goal string"
+        TEXT files_modified "JSON array of paths"
+        TEXT decisions "JSON array of strings"
+        TEXT errors_encountered "JSON array of strings"
+        TEXT outcome "mirrors sessions.outcome"
+        TEXT keywords "JSON array of strings"
+        INTEGER estimated_tokens "must stay under 500"
+        INTEGER created_at "unix timestamp ms"
+    }
+
+    %% ─────────────────────────────────────────
+    %% RAW MESSAGES TABLE (opt-in)
+    %% ─────────────────────────────────────────
+
+    messages_raw {
+        TEXT id PK "uuid"
+        TEXT session_id FK "→ sessions.id"
+        TEXT role "user | assistant"
+        TEXT content "full message content"
+        INTEGER index "position in conversation"
+        INTEGER timestamp "unix timestamp ms"
+    }
+
+    %% ─────────────────────────────────────────
+    %% PROJECT MEMORY SUB-TABLES
+    %% ─────────────────────────────────────────
+
+    known_issues {
+        TEXT id PK "uuid"
+        TEXT project_id FK "→ projects.id"
+        TEXT description "human readable issue"
+        INTEGER detected_at "unix timestamp ms"
+        INTEGER resolved_at "nullable unix timestamp ms"
+        TEXT resolved_in_session FK "→ sessions.id, nullable"
+    }
+
+    recent_work {
+        TEXT id PK "uuid"
+        TEXT project_id FK "→ projects.id"
+        TEXT session_id FK "→ sessions.id"
+        TEXT summary "one-line description of session work"
+        INTEGER date "unix timestamp ms"
+    }
+
+    %% ─────────────────────────────────────────
+    %% CONFIG TABLE
+    %% ─────────────────────────────────────────
+
+    config {
+        TEXT key PK "config key"
+        TEXT value "config value (JSON)"
+        INTEGER updated_at "unix timestamp ms"
+    }
+
+    %% ─────────────────────────────────────────
+    %% RELATIONSHIPS
+    %% ─────────────────────────────────────────
+
+    projects ||--o{ sessions : "has"
+    projects ||--o{ known_issues : "tracks"
+    projects ||--o{ recent_work : "records"
+
+    sessions ||--o{ events : "produces"
+    sessions ||--o| digests : "has one"
+    sessions ||--o{ messages_raw : "stores (opt-in)"
+    sessions ||--o{ recent_work : "referenced by"
+    sessions ||--o| known_issues : "resolves (nullable)"

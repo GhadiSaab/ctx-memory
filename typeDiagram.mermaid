@@ -1,0 +1,283 @@
+classDiagram
+
+    %% ─────────────────────────────────────────
+    %% CORE ENTITIES
+    %% ─────────────────────────────────────────
+
+    class Project {
+        +id: string
+        +name: string
+        +path: string
+        +gitRemote: string | null
+        +pathHash: string
+        +memoryDoc: string
+        +updatedAt: number
+    }
+
+    class Session {
+        +id: string
+        +projectId: string
+        +tool: ToolName
+        +startedAt: number
+        +endedAt: number | null
+        +lastSeenAt: number
+        +outcome: Outcome | null
+        +exitCode: number | null
+        +goal: string | null
+        +keywords: string[]
+        +embedding: Float32Array | null
+    }
+
+    class ToolName {
+        <<enumeration>>
+        claude-code
+        codex
+        gemini
+        opencode
+    }
+
+    class Outcome {
+        <<enumeration>>
+        completed
+        interrupted
+        crashed
+    }
+
+    %% ─────────────────────────────────────────
+    %% RAW MESSAGE (opt-in storage)
+    %% ─────────────────────────────────────────
+
+    class Message {
+        +sessionId: string
+        +role: Role
+        +content: string
+        +timestamp: number
+        +index: number
+    }
+
+    class Role {
+        <<enumeration>>
+        user
+        assistant
+    }
+
+    %% ─────────────────────────────────────────
+    %% LAYER 1 — MESSAGE SCORING
+    %% ─────────────────────────────────────────
+
+    class StructuralFeatures {
+        +length: number
+        +hasCodeBlock: boolean
+        +hasFilePath: boolean
+        +sentenceCount: number
+        +startsWithVerb: boolean
+        +isShortConfirmation: boolean
+        +positionalWeight: number
+    }
+
+    class MessageType {
+        <<enumeration>>
+        goal
+        decision
+        error
+        conclusion
+        noise
+    }
+
+    class WeightedMessage {
+        +message: Message
+        +weight: number
+        +type: MessageType
+        +features: StructuralFeatures
+    }
+
+    class PatternType {
+        <<enumeration>>
+        confirmation
+        error_retry
+        iteration
+        struggle
+    }
+
+    class ConversationPattern {
+        +type: PatternType
+        +messageIndexes: number[]
+        +extractedDecision: string | null
+        +confidence: number
+        +summary: string
+    }
+
+    %% ─────────────────────────────────────────
+    %% LAYER 1 — EVENT EXTRACTION
+    %% ─────────────────────────────────────────
+
+    class EventType {
+        <<enumeration>>
+        file_created
+        file_modified
+        command_run
+        dependency_added
+        commit
+        error
+        decision
+        build_attempt
+        test_run
+        config_modified
+    }
+
+    class EventSource {
+        <<enumeration>>
+        hook
+        mcp
+    }
+
+    class FilePayload {
+        +path: string
+        +operation: string
+        +diffSummary: string | null
+    }
+
+    class CommandPayload {
+        +command: string
+        +exitCode: number
+        +success: boolean
+    }
+
+    class DependencyPayload {
+        +manager: string
+        +package: string
+        +version: string | null
+    }
+
+    class CommitPayload {
+        +message: string
+        +hash: string | null
+    }
+
+    class ErrorPayload {
+        +message: string
+        +command: string | null
+        +exitCode: number | null
+    }
+
+    class DecisionPayload {
+        +content: string
+        +confidence: number
+        +triggeredByPattern: PatternType
+    }
+
+    class ExtractedEvent {
+        +id: string
+        +sessionId: string
+        +type: EventType
+        +payload: EventPayload
+        +weight: number
+        +timestamp: number
+        +source: EventSource
+    }
+
+    %% ─────────────────────────────────────────
+    %% LAYER 1 OUTPUT
+    %% ─────────────────────────────────────────
+
+    class Layer1Output {
+        +sessionId: string
+        +goal: string | null
+        +weightedMessages: WeightedMessage[]
+        +events: ExtractedEvent[]
+        +decisions: string[]
+        +errors: string[]
+        +keywords: string[]
+        +patterns: ConversationPattern[]
+        +tokenCount: number
+    }
+
+    %% ─────────────────────────────────────────
+    %% LAYER 2 — DIGEST
+    %% ─────────────────────────────────────────
+
+    class Layer2Digest {
+        +sessionId: string
+        +goal: string
+        +filesModified: string[]
+        +decisions: string[]
+        +errorsEncountered: string[]
+        +outcome: Outcome
+        +keywords: string[]
+        +estimatedTokens: number
+    }
+
+    %% ─────────────────────────────────────────
+    %% LAYER 3 — PROJECT MEMORY
+    %% ─────────────────────────────────────────
+
+    class ProjectMemory {
+        +projectId: string
+        +architecture: string
+        +knownIssues: KnownIssue[]
+        +conventions: string[]
+        +recentWork: RecentWorkEntry[]
+        +updatedAt: number
+    }
+
+    class KnownIssue {
+        +description: string
+        +resolvedAt: number | null
+        +resolvedIn: string | null
+    }
+
+    class RecentWorkEntry {
+        +sessionId: string
+        +date: number
+        +summary: string
+    }
+
+    %% ─────────────────────────────────────────
+    %% RELATIONSHIPS — Core
+    %% ─────────────────────────────────────────
+
+    Project "1" --> "many" Session : has
+    Project "1" --> "1" ProjectMemory : has
+
+    Session --> ToolName : uses
+    Session --> Outcome : results in
+
+    Session "1" --> "many" Message : stores (opt-in)
+    Session "1" --> "many" ExtractedEvent : produces
+
+    %% ─────────────────────────────────────────
+    %% RELATIONSHIPS — Layer 1
+    %% ─────────────────────────────────────────
+
+    Message --> WeightedMessage : enriched into
+    WeightedMessage --> StructuralFeatures : has
+    WeightedMessage --> MessageType : classified as
+
+    ExtractedEvent --> EventType : typed as
+    ExtractedEvent --> EventSource : sourced from
+    ExtractedEvent --> FilePayload : payload
+    ExtractedEvent --> CommandPayload : payload
+    ExtractedEvent --> DependencyPayload : payload
+    ExtractedEvent --> CommitPayload : payload
+    ExtractedEvent --> ErrorPayload : payload
+    ExtractedEvent --> DecisionPayload : payload
+
+    ConversationPattern --> PatternType : typed as
+    DecisionPayload --> PatternType : triggered by
+
+    %% ─────────────────────────────────────────
+    %% RELATIONSHIPS — Layer outputs
+    %% ─────────────────────────────────────────
+
+    Session --> Layer1Output : processed into
+    Layer1Output --> WeightedMessage : contains
+    Layer1Output --> ExtractedEvent : contains
+    Layer1Output --> ConversationPattern : contains
+
+    Layer1Output --> Layer2Digest : transformed into
+
+    Layer2Digest --> Outcome : reflects
+    Layer2Digest --> ProjectMemory : merged into
+
+    ProjectMemory --> KnownIssue : tracks
+    ProjectMemory --> RecentWorkEntry : tracks
