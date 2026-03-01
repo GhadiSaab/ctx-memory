@@ -19,6 +19,7 @@ export interface Message {
 
 /** Signals extracted from a single message's text. */
 export interface StructuralFeatures {
+  length: number;
   hasCodeBlock: boolean;
   hasFilePath: boolean;
   hasUrl: boolean;
@@ -27,6 +28,10 @@ export interface StructuralFeatures {
   hasGoalPhrase: boolean;      // "the goal is", "I need to", etc.
   questionCount: number;
   imperativeCount: number;     // sentences starting with a verb
+  sentenceCount: number;
+  startsWithVerb: boolean;
+  isShortConfirmation: boolean;
+  positionalWeight: number;    // 0–1 based on position in conversation
 }
 
 /** A message annotated with its computed importance score. */

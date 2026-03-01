@@ -20,8 +20,10 @@ const DB_PATH = resolveDbPath(
   process.env["LLM_MEMORY_DB_PATH"] ?? "~/.llm-memory/store.db"
 );
 
-const DB_DIR = DB_PATH.substring(0, DB_PATH.lastIndexOf("/"));
-mkdirSync(DB_DIR, { recursive: true });
+const DB_DIR = DB_PATH.lastIndexOf("/") > 0
+  ? DB_PATH.substring(0, DB_PATH.lastIndexOf("/"))
+  : null;
+if (DB_DIR) mkdirSync(DB_DIR, { recursive: true });
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 
