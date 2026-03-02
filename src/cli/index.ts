@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // CLI entry point for llm-memory.
 // Usage: llm-memory <setup|status|projects <list|show|forget>>
 
@@ -431,10 +432,10 @@ function runProjectsForget(name: string | undefined, hard: boolean): void {
 // ─── Run ─────────────────────────────────────────────────────────────────────
 
 // Only run when executed directly, not when imported as a module in tests.
-const isMain = process.argv[1]?.endsWith("cli/index.js") ||
-  process.argv[1]?.endsWith("cli/index.ts");
+// Vitest sets VITEST env var; we're also safe to check argv[1] for the test runner.
+const isVitest = !!process.env["VITEST"];
 
-if (isMain) {
+if (!isVitest) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
