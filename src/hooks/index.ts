@@ -44,10 +44,6 @@ export function writeClaudeHooks(claudeDir: string): void {
   // Deep-merge: preserve existing hooks sections, add ours if absent
   const existingHooks = (existing["hooks"] ?? {}) as Record<string, unknown>;
 
-  const mergedPre = mergeClaudeHookArray(
-    existingHooks["PreToolUse"],
-    hookConfig.hooks.PreToolUse
-  );
   const mergedPost = mergeClaudeHookArray(
     existingHooks["PostToolUse"],
     hookConfig.hooks.PostToolUse
@@ -57,7 +53,6 @@ export function writeClaudeHooks(claudeDir: string): void {
     ...existing,
     hooks: {
       ...existingHooks,
-      PreToolUse: mergedPre,
       PostToolUse: mergedPost,
     },
   };

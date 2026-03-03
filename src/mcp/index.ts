@@ -8,7 +8,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { sweepOrphanedSessions } from "../db/index.js";
+import { sweepOrphanedSessions, db } from "../db/index.js";
 import { loadEmbedder } from "../db/embedding.js";
 import {
   handleStoreMessage,
@@ -180,17 +180,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 process.on("SIGTERM", async () => {
   console.error("[llm-memory] SIGTERM received — shutting down");
 
-  // If the wrapper set a session ID, trigger session end on SIGTERM
+  // If the wrapper set a session ID, trigger session end on SIGTERM —
+  // but only if the wrapper hasn't already processed it (digest not yet written).
   if (SESSION_ID && PROJECT_ID) {
-    try {
-      await handleEndSession({
-        session_id: SESSION_ID,
-        project_id: PROJECT_ID,
-        outcome: "interrupted",
-        exit_code: null,
-      });
-    } catch (e) {
-      console.error("[llm-memory] SIGTERM end_session failed:", e);
+    const alreadyDone = db.prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM digests WHERE session_id = ?"
+    ).get(SESSION_ID);
+    if (!alreadyDone || alreadyDone.count === 0) {
+      try {
+        await handleEndSession({
+          session_id: SESSION_ID,
+          project_id: PROJECT_ID,
+          outcome: "interrupted",
+          exit_code: null,
+        });
+      } catch (e) {
+        console.error("[llm-memory] end_session failed:", e);
+      }
     }
   }
 

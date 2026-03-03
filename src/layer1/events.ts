@@ -63,7 +63,7 @@ function handleFileTool(
     );
   }
 
-  const isCreate = tool === "write_file" || tool === "create_file";
+  const isCreate = tool === "write" || tool === "write_file" || tool === "create_file";
   const fileType = isCreate ? "file_created" : "file_modified";
 
   return makeEvent(
@@ -189,11 +189,12 @@ export function classifyToolEvent(
 ): ExtractedEvent | null {
   const t = tool.toLowerCase();
 
-  if (t === "write_file" || t === "create_file") {
+  // Claude Code tool names (Write, Edit, Bash) + generic snake_case variants
+  if (t === "write" || t === "write_file" || t === "create_file") {
     return handleFileTool(t, args);
   }
 
-  if (t === "edit_file" || t === "str_replace" || t === "str_replace_editor") {
+  if (t === "edit" || t === "edit_file" || t === "str_replace" || t === "str_replace_editor") {
     return handleFileTool(t, args);
   }
 

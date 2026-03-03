@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Shell wrapper — sits between the user and the real tool binary.
 // Resolves the project, sets env vars, spawns MCP server + real tool,
 // and triggers session end on exit.
@@ -13,7 +14,7 @@ import type { SessionOutcome } from "../types/index.js";
 import { detectTool } from "./detect.js";
 import { resolveProject } from "./project.js";
 import { handleEndSession } from "../mcp/handlers.js";
-import { getSessionById, deleteSession } from "../db/index.js";
+import { getSessionById, deleteSession, db } from "../db/index.js";
 import type { UUID } from "../types/index.js";
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
@@ -55,16 +56,15 @@ async function signalSessionEnd(
   outcome: SessionOutcome,
   exitCode: number | null
 ): Promise<void> {
-  // Minimum viable session guard: skip trivial sessions
+  // Minimum viable session guard: skip trivial sessions (no events and very short)
   const session = getSessionById(sessionId as UUID);
   if (session) {
     const durationSeconds = Math.round((Date.now() - session.started_at) / 1000);
-    if (session.message_count < 3 || durationSeconds < 60) {
-      try {
-        deleteSession(sessionId as UUID);
-      } catch {
-        // best-effort
-      }
+    const eventCount = (db.prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
+    ).get(sessionId) ?? { count: 0 }).count;
+    if (eventCount === 0 && durationSeconds < 30) {
+      try { deleteSession(sessionId as UUID); } catch { /* best-effort */ }
       return;
     }
   }
@@ -116,13 +116,9 @@ export async function main(): Promise<void> {
   });
 }
 
-// ─── Entrypoint (only when run directly) ─────────────────────────────────────
+// ─── Entrypoint ───────────────────────────────────────────────────────────────
 
-// Check if this file is the main module
-const isMain = process.argv[1] &&
-  (process.argv[1].endsWith("/wrapper/index.js") || process.argv[1].endsWith("/wrapper/index.ts"));
-
-if (isMain) {
+if (!process.env["VITEST"]) {
   main().catch((e) => {
     console.error("[llm-memory] wrapper fatal error:", e);
     process.exit(1);

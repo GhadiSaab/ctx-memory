@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
+import { execSync } from "node:child_process";
 import { db, getConfigValue, setConfigValue } from "../db/index.js";
 import { writeClaudeHooks, writeGeminiHooks, writeOpenCodeHooks } from "../hooks/index.js";
 import type { UUID, ToolName } from "../types/index.js";
@@ -12,6 +13,14 @@ import type { UUID, ToolName } from "../types/index.js";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 const KNOWN_TOOLS: ToolName[] = ["claude-code", "codex", "gemini", "opencode"];
+
+/** Maps ToolName (internal ID) to the actual binary name on disk. */
+const TOOL_BINARY: Record<ToolName, string> = {
+  "claude-code": "claude",
+  "codex": "codex",
+  "gemini": "gemini",
+  "opencode": "opencode",
+};
 
 const PATH_COMMENT = "# llm-memory";
 const PATH_LINE = 'export PATH="$HOME/.llm-memory/bin:$PATH"';
@@ -36,7 +45,7 @@ export function detectInstalledTools(pathDirs: string[]): ToolName[] {
     for (const tool of KNOWN_TOOLS) {
       if (found.has(tool)) continue;
       try {
-        fs.accessSync(path.join(dir, tool), fs.constants.F_OK);
+        fs.accessSync(path.join(dir, TOOL_BINARY[tool]), fs.constants.F_OK);
         found.add(tool);
       } catch {
         // not in this dir
@@ -88,6 +97,28 @@ export function injectPathLine(shellRcPath: string): boolean {
   const toAppend = `${prefix}${PATH_COMMENT}\n${PATH_LINE}\n`;
   fs.writeFileSync(shellRcPath, content + toAppend, "utf8");
   return true;
+}
+
+// ─── registerClaudeMcp ───────────────────────────────────────────────────────
+
+/**
+ * Registers the llm-memory MCP server with Claude Code using `claude mcp add`.
+ * Idempotent: removes existing entry first (claude mcp add --scope user).
+ */
+function registerClaudeMcp(receiverPath: string): void {
+  const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
+  try {
+    // Remove existing registration (ignore errors if not registered yet)
+    execSync(`claude mcp remove llm-memory --scope user 2>/dev/null || true`, { stdio: "pipe" });
+    execSync(
+      `claude mcp add --scope user llm-memory -- node ${mcpScript}`,
+      { stdio: "pipe" }
+    );
+  } catch {
+    // Non-fatal: user can register manually
+    console.warn("  Warning: could not auto-register MCP server. Run manually:");
+    console.warn(`    claude mcp add --scope user llm-memory -- node ${mcpScript}`);
+  }
 }
 
 // ─── forgetProject ────────────────────────────────────────────────────────────
@@ -264,25 +295,28 @@ async function runSetup(): Promise<void> {
   const llmBin = path.join(homedir(), ".llm-memory", "bin");
   fs.mkdirSync(llmBin, { recursive: true });
 
-  // Resolve wrapper path relative to this script's install location
-  const wrapperPath = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
-    "../../wrapper/index.js"
-  );
+  // Resolve paths relative to this script's install location
+  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+  const wrapperPath = path.resolve(scriptDir, "../wrapper/index.js");
+  const receiverPath = path.resolve(scriptDir, "../hooks/receiver.js");
+
+  // Always create hook-receiver symlink (needed by all tool hooks)
+  createWrapperSymlink("hook-receiver", receiverPath, llmBin);
 
   const results: string[] = [];
 
   for (const tool of selected) {
-    // Write hook configs
+    // Write hook configs + register MCP server
     if (tool === "claude-code") {
       writeClaudeHooks(path.join(homedir(), ".claude"));
+      registerClaudeMcp(receiverPath);
     } else if (tool === "gemini") {
       writeGeminiHooks(path.join(homedir(), ".gemini"));
     } else if (tool === "opencode") {
       writeOpenCodeHooks(path.join(homedir(), ".opencode"));
     }
-    // Create wrapper symlink
-    createWrapperSymlink(tool, wrapperPath, llmBin);
+    // Create wrapper symlink named after the binary (e.g. "claude", not "claude-code")
+    createWrapperSymlink(TOOL_BINARY[tool], wrapperPath, llmBin);
     results.push(tool);
   }
 

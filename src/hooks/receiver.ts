@@ -1,9 +1,12 @@
+#!/usr/bin/env node
 // Hook receiver — called by every tool hook (Claude Code, Gemini, OpenCode).
 // Reads JSON from stdin, classifies the tool event, inserts into DB.
 // Must exit in <500ms. DB write is synchronous — safe.
 
 import { classifyToolEvent } from "../layer1/events.js";
-import { insertEvent } from "../db/index.js";
+import { insertEvent, getSessionById, createSession, getProjectByPathHash, createProject } from "../db/index.js";
+import { createHash } from "node:crypto";
+import { basename } from "node:path";
 import type { UUID } from "../types/index.js";
 
 // ─── processHookPayload ───────────────────────────────────────────────────────
@@ -26,6 +29,24 @@ export function processHookPayload(
 
     const event = classifyToolEvent(toolName, args, result, success);
     if (!event) return false;
+
+    // Ensure session exists in DB — create it on the fly if missing (hook fired
+    // without the wrapper, e.g. claude launched directly not via llm-memory shim)
+    if (!getSessionById(sessionId as UUID)) {
+      const cwd = str(payload["cwd"] ?? process.cwd());
+      const pathHash = createHash("sha256").update(cwd).digest("hex");
+      const project = getProjectByPathHash(pathHash) ?? createProject({
+        name: basename(cwd),
+        path: cwd,
+        git_remote: null,
+        path_hash: pathHash,
+      });
+      createSession({
+        id: sessionId as UUID,
+        project_id: project.id,
+        tool: "claude-code",
+      });
+    }
 
     insertEvent({
       session_id: sessionId as UUID,
@@ -91,12 +112,6 @@ export function parseArgs(argv: string[]): Record<string, string> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
-  const sessionId = args["--session"];
-
-  // No session ID → nothing to store, silent exit
-  if (!sessionId) {
-    process.exit(0);
-  }
 
   let stdin = "";
   try {
@@ -115,14 +130,16 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Resolve session ID: --session arg takes priority, then payload.session_id (Claude Code native)
+  const sessionId = args["--session"] || (typeof payload["session_id"] === "string" ? payload["session_id"] : "");
+
+  if (!sessionId) process.exit(0);
+
   processHookPayload(sessionId, payload);
   process.exit(0);
 }
 
 // Only run main when executed directly (not imported in tests)
-const isMain = process.argv[1] &&
-  (process.argv[1].endsWith("/hooks/receiver.js") || process.argv[1].endsWith("/hooks/receiver.ts"));
-
-if (isMain) {
+if (!process.env["VITEST"]) {
   main().catch(() => process.exit(0));
 }

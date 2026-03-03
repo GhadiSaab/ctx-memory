@@ -11,10 +11,6 @@ const HOOK_CMD = (event: string) =>
 
 export interface ClaudeHookConfig {
   hooks: {
-    PreToolUse: Array<{
-      matcher: string;
-      hooks: Array<{ type: string; command: string }>;
-    }>;
     PostToolUse: Array<{
       matcher: string;
       hooks: Array<{ type: string; command: string }>;
@@ -25,12 +21,6 @@ export interface ClaudeHookConfig {
 export function buildClaudeHookConfig(): ClaudeHookConfig {
   return {
     hooks: {
-      PreToolUse: [
-        {
-          matcher: "*",
-          hooks: [{ type: "command", command: HOOK_CMD("PreToolUse") }],
-        },
-      ],
       PostToolUse: [
         {
           matcher: "*",

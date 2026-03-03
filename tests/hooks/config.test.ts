@@ -29,16 +29,9 @@ afterEach(() => {
 // ─── buildClaudeHookConfig ────────────────────────────────────────────────────
 
 describe("buildClaudeHookConfig", () => {
-  it("returns an object with PreToolUse and PostToolUse hooks", () => {
+  it("returns an object with PostToolUse hooks", () => {
     const config = buildClaudeHookConfig();
-    expect(config).toHaveProperty("hooks.PreToolUse");
     expect(config).toHaveProperty("hooks.PostToolUse");
-  });
-
-  it("PreToolUse hook command references hook-receiver", () => {
-    const config = buildClaudeHookConfig();
-    const hook = config.hooks.PreToolUse[0].hooks[0];
-    expect(hook.command).toContain("hook-receiver");
   });
 
   it("PostToolUse hook command references hook-receiver", () => {
@@ -47,17 +40,15 @@ describe("buildClaudeHookConfig", () => {
     expect(hook.command).toContain("hook-receiver");
   });
 
-  it("hook commands include $LLM_MEMORY_SESSION_ID", () => {
+  it("hook command includes $LLM_MEMORY_SESSION_ID", () => {
     const config = buildClaudeHookConfig();
-    const pre = config.hooks.PreToolUse[0].hooks[0].command;
     const post = config.hooks.PostToolUse[0].hooks[0].command;
-    expect(pre).toContain("$LLM_MEMORY_SESSION_ID");
     expect(post).toContain("$LLM_MEMORY_SESSION_ID");
   });
 
   it("matcher is '*' (all tools)", () => {
     const config = buildClaudeHookConfig();
-    expect(config.hooks.PreToolUse[0].matcher).toBe("*");
+    expect(config.hooks.PostToolUse[0].matcher).toBe("*");
   });
 });
 
@@ -102,7 +93,6 @@ describe("writeClaudeHooks", () => {
     writeClaudeHooks(claudeDir);
 
     const written = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(written).toHaveProperty("hooks.PreToolUse");
     expect(written).toHaveProperty("hooks.PostToolUse");
   });
 
@@ -118,7 +108,6 @@ describe("writeClaudeHooks", () => {
     expect(written.theme).toBe("dark");
     expect(written.model).toBe("claude-opus");
     expect(written.customKey).toBe(42);
-    expect(written).toHaveProperty("hooks.PreToolUse");
   });
 
   it("is idempotent — running twice does not duplicate hooks", () => {
@@ -128,7 +117,6 @@ describe("writeClaudeHooks", () => {
     writeClaudeHooks(claudeDir);
 
     const written = JSON.parse(readFileSync(join(claudeDir, "settings.json"), "utf8"));
-    expect(written.hooks.PreToolUse).toHaveLength(1);
     expect(written.hooks.PostToolUse).toHaveLength(1);
   });
 });

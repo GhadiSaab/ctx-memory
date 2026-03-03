@@ -129,12 +129,13 @@ export function ensureSession(fields: {
 }
 
 export function createSession(fields: {
+  id?: UUID;
   project_id: UUID;
   tool: ToolName;
 }): Session {
   const now = Date.now() as UnixMs;
   const row = {
-    id: uuid(),
+    id: fields.id ?? uuid(),
     project_id: fields.project_id,
     tool: fields.tool,
     started_at: now,
