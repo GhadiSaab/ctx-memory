@@ -163,8 +163,8 @@ export async function main(): Promise<void> {
   process.env["LLM_MEMORY_SESSION_ID"] = sessionId;
   process.env["LLM_MEMORY_PROJECT_ID"] = projectId;
 
-  // Inject project memory into AGENTS.md for Codex (its context injection mechanism)
-  if ((tool as string) === "codex") {
+  // Inject project memory into AGENTS.md for Codex and OpenCode (both read it at startup)
+  if ((tool as string) === "codex" || (tool as string) === "opencode") {
     try { injectCodexContext(cwd, projectId); } catch { /* best-effort */ }
   }
 
