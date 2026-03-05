@@ -3,7 +3,7 @@
 // Resolves the project, sets env vars, spawns MCP server + real tool,
 // and triggers session end on exit.
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { accessSync, constants, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -151,10 +151,44 @@ export function injectCodexContext(cwd: string, projectId: string): void {
   writeFileSync(agentsPath, injected, "utf8");
 }
 
+// ─── Non-interactive subcommands (bypass wrapper entirely) ───────────────────
+
+// These subcommands don't start an interactive session — pass them straight
+// through to the real binary without any session tracking or MCP setup.
+const BYPASS_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+  claude:    new Set(["mcp", "doctor", "update", "login", "logout", "config", "completion", "migrate"]),
+  codex:     new Set(["login", "logout", "mcp", "mcp-server", "completion", "debug", "apply", "resume",
+                      "fork", "cloud", "features", "exec", "review", "sandbox", "app-server"]),
+  opencode:  new Set(["update", "upgrade", "uninstall", "auth", "mcp", "completion", "debug", "acp",
+                      "serve", "web", "models", "stats", "export", "import", "github", "pr",
+                      "session", "db", "agent"]),
+  gemini:    new Set(["update", "login", "logout", "completion"]),
+};
+
+function shouldBypass(tool: string, args: string[]): boolean {
+  const sub = args[0];
+  if (!sub || sub.startsWith("-")) return false;
+  return BYPASS_SUBCOMMANDS[tool]?.has(sub) ?? false;
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export async function main(): Promise<void> {
   const tool = detectTool();
+  const toolArgs = process.argv.slice(2);
+
+  // Bypass: non-interactive subcommands go straight to the real binary
+  if (shouldBypass(tool, toolArgs)) {
+    const pathDirs = (process.env["PATH"] ?? "").split(":");
+    const realBin = findRealBinary(tool, pathDirs);
+    try {
+      execFileSync(realBin, toolArgs, { stdio: "inherit" });
+      process.exit(0);
+    } catch (e: unknown) {
+      process.exit((e as NodeJS.ErrnoException & { status?: number }).status ?? 1);
+    }
+  }
+
   const cwd = process.cwd();
   const { projectId } = await resolveProject(cwd);
   const sessionId = uuid();
@@ -184,7 +218,6 @@ export async function main(): Promise<void> {
   // Find and spawn the real tool binary
   const pathDirs = (process.env["PATH"] ?? "").split(":");
   const realBin = findRealBinary(tool, pathDirs);
-  const toolArgs = process.argv.slice(2); // forward all args after the script name
   const toolProc = spawn(realBin, toolArgs, {
     stdio: "inherit",
     env: { ...process.env },
