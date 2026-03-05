@@ -168,13 +168,13 @@ export async function main(): Promise<void> {
     try { injectCodexContext(cwd, projectId); } catch { /* best-effort */ }
   }
 
-  // Spawn MCP server as a side-car child process — only for Claude Code,
-  // which is the only tool that supports MCP. Other tools (codex, gemini,
-  // opencode) don't use MCP, and StdioServerTransport would steal stdin
-  // from the child process and corrupt the terminal.
+  // Spawn MCP server as a side-car child process for tools that support MCP.
+  // Claude Code and OpenCode both support MCP. Codex and Gemini do not —
+  // StdioServerTransport would steal stdin from the child and corrupt the terminal.
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const mcpScript = join(__dirname, "..", "mcp", "index.js");
-  const mcpProc = (tool as string) === "claude"
+  const supportsMcp = (tool as string) === "claude" || (tool as string) === "opencode";
+  const mcpProc = supportsMcp
     ? spawn(process.execPath, [mcpScript], {
         stdio: ["ignore", "ignore", "inherit"],
         env: { ...process.env },

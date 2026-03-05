@@ -121,6 +121,42 @@ function registerClaudeMcp(receiverPath: string): void {
   }
 }
 
+// ─── registerOpenCodeMcp ─────────────────────────────────────────────────────
+
+/**
+ * Registers the llm-memory MCP server in ~/.opencode/config.json under the mcp key.
+ * Idempotent: overwrites any existing llm-memory entry.
+ */
+function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
+  const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
+  const configPath = path.join(openCodeDir, "config.json");
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  } catch { /* file may not exist yet */ }
+
+  const existingMcp = (typeof existing["mcp"] === "object" && existing["mcp"] !== null)
+    ? (existing["mcp"] as Record<string, unknown>)
+    : {};
+
+  const merged = {
+    ...existing,
+    mcp: {
+      ...existingMcp,
+      "llm-memory": {
+        type: "local",
+        command: process.execPath,
+        args: [mcpScript],
+        env: { LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? "" },
+      },
+    },
+  };
+
+  fs.mkdirSync(openCodeDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+}
+
 // ─── forgetProject ────────────────────────────────────────────────────────────
 
 /**
@@ -316,6 +352,7 @@ async function runSetup(): Promise<void> {
       writeGeminiHooks(path.join(homedir(), ".gemini"));
     } else if (tool === "opencode") {
       writeOpenCodeHooks(path.join(homedir(), ".opencode"));
+      registerOpenCodeMcp(receiverPath, path.join(homedir(), ".opencode"));
     }
     // Create wrapper symlink named after the binary (e.g. "claude", not "claude-code")
     createWrapperSymlink(TOOL_BINARY[tool], wrapperPath, llmBin);
