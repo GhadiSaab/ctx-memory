@@ -1,6 +1,7 @@
 // Conversation pattern detector — pure function, no I/O, never throws.
 
 import type { WeightedMessage, ConversationPattern } from "../types/index.js";
+import { DECISION_SIGNALS } from "./keywords.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -13,6 +14,27 @@ function extractFilePath(content: string): string | null {
 /** Truncate a string for use in a summary. */
 function truncate(s: string, max = 80): string {
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
+}
+
+/**
+ * Extract a short decision statement from a long assistant message.
+ * Finds the first sentence/paragraph that contains a decision signal and is under 150 chars.
+ * Skips segments with code blocks or markdown headers.
+ * Falls back to null if no good sentence found (better to skip than dump garbage).
+ */
+function extractDecisionFromMessage(content: string): string | null {
+  // Split on sentence endings AND paragraph breaks
+  const segments = content.split(/(?<=[.!?])\s+|\n\n+/);
+  for (const segment of segments) {
+    const s = segment.trim();
+    // Skip: too short, too long, contains code blocks or markdown headers
+    if (s.length < 10 || s.length > 150) continue;
+    if (s.includes("```") || s.startsWith("#") || s.startsWith("-") || s.startsWith("*")) continue;
+    if (DECISION_SIGNALS.some(sig => s.toLowerCase().includes(sig.toLowerCase()))) {
+      return s;
+    }
+  }
+  return null;
 }
 
 // ─── Pattern detectors ────────────────────────────────────────────────────────
@@ -40,10 +62,13 @@ function tryConfirmation(
     next.features.isShortConfirmation &&
     !used.has(i + 1)
   ) {
+    const decision = extractDecisionFromMessage(cur.message.content);
+    // Don't create a decision entry if we can't extract a meaningful one
+    if (decision === null) return null;
     return {
       type: "confirmation",
       messageIndexes: [i, i + 1],
-      extractedDecision: truncate(cur.message.content),
+      extractedDecision: decision,
       confidence: 1.0,
       summary: `Assistant proposed a solution; user confirmed with "${next.message.content.trim()}"`,
     };

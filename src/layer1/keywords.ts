@@ -9,6 +9,10 @@ export const DECISION_SIGNALS: readonly string[] = [
   "the approach is", "we should use", "instead of", "rather than",
   "switching to", "let's use", "I think we should", "agreed",
   "that makes sense", "good idea", "let's do that",
+  // assistant announcement patterns
+  "I'll use", "I'm using", "the architecture", "the design is",
+  "I've decided", "we're going to use", "I chose", "I'm going with",
+  "the solution is", "I implemented", "I added", "I created",
 ];
 
 export const GOAL_SIGNALS: readonly string[] = [
@@ -19,9 +23,10 @@ export const GOAL_SIGNALS: readonly string[] = [
 
 export const FAILURE_SIGNALS: readonly string[] = [
   "error", "failed", "doesn't work", "not working", "broken",
-  "exception", "undefined", "null pointer", "crash", "issue",
-  "bug", "wrong", "incorrect", "unexpected", "TypeError",
+  "exception", "null pointer", "crash",
+  "bug", "unexpected", "TypeError", "SyntaxError", "ReferenceError",
   "cannot find", "module not found", "permission denied",
+  "ENOENT", "EACCES", "ECONNREFUSED",
 ];
 
 export const CONCLUSION_SIGNALS: readonly string[] = [

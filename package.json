@@ -12,7 +12,12 @@
     "dev": "tsc --watch",
     "test": "vitest",
     "test:run": "vitest run",
-    "mcp": "node dist/src/mcp/index.js"
+    "mcp": "node dist/src/mcp/index.js",
+    "test:realworld": "node scripts/realworld-test.mjs",
+    "test:realworld:verbose": "node scripts/realworld-test.mjs --verbose",
+    "test:quality": "node scripts/quality-test.mjs",
+    "test:quality:verbose": "node scripts/quality-test.mjs --verbose",
+    "test:quality:real": "node scripts/quality-test.mjs --real"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.3.0",

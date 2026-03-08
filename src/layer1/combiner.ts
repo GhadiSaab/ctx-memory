@@ -8,11 +8,31 @@ import type {
   Layer1Output,
 } from "../types/index.js";
 import { extractStructuralFeatures } from "./structural.js";
-import { scoreKeywords } from "./keywords.js";
+import { scoreKeywords, DECISION_SIGNALS } from "./keywords.js";
 import { analyzePosition } from "./positional.js";
 import { detectPatterns } from "./patterns.js";
 import { classifyToolEvent } from "./events.js";
 import { extractKeywords } from "./tfidf.js";
+
+// Extract the first clean sentence/paragraph containing a decision signal.
+// Skips code blocks, markdown headers, and list items.
+function extractDecisionSnippet(content: string): string {
+  const segments = content.split(/(?<=[.!?])\s+|\n\n+/);
+  for (const segment of segments) {
+    const s = segment.trim();
+    if (s.length < 10 || s.length > 200) continue;
+    if (s.includes("```") || s.startsWith("#") || s.startsWith("-") || s.startsWith("*")) continue;
+    if (DECISION_SIGNALS.some(sig => s.toLowerCase().includes(sig.toLowerCase()))) {
+      return s.length > 120 ? s.slice(0, 119) + "…" : s;
+    }
+  }
+  // fallback: first non-code, non-header line
+  const firstLine = content.split("\n").find(l => {
+    const t = l.trim();
+    return t.length > 5 && !t.startsWith("#") && !t.startsWith("-") && !t.startsWith("*") && !t.includes("```");
+  }) ?? content;
+  return firstLine.length > 120 ? firstLine.slice(0, 119) + "…" : firstLine;
+}
 
 // ─── RawToolEvent ─────────────────────────────────────────────────────────────
 
@@ -106,13 +126,15 @@ export function processSession(
       .map((p) => p.extractedDecision!),
     ...weightedMessages
       .filter((m) => m.type === "decision")
-      .map((m) => m.message.content),
+      .map((m) => extractDecisionSnippet(m.message.content)),
   ];
 
   // Step 12: errors — 'error' typed messages + error events
+  // Only user messages or short assistant messages (< 300 chars) — avoids dumping long Q&A responses
   const errors: string[] = [
     ...weightedMessages
-      .filter((m) => m.type === "error")
+      .filter((m) => m.type === "error" &&
+        (m.message.role === "user" || m.message.content.length < 300))
       .map((m) => m.message.content),
     ...events
       .filter((e) => e.type === "error")

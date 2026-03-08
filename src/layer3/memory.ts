@@ -6,11 +6,22 @@ import { randomUUID } from "node:crypto";
 
 // ─── Architecture keyword detection ───────────────────────────────────────────
 
-const ARCH_KEYWORDS = ["use", "with", "instead", "switched"];
+// Architecture notes describe stack/design choices — must mention a tech or pattern
+const ARCH_SIGNALS = [
+  "we use ", "we'll use ", "i'll use ", "switched to ", "chose ",
+  "the architecture", "the stack", "the design",
+  "instead of ", "rather than ",
+  "react", "vue", "angular", "next", "svelte",
+  "node", "deno", "bun", "python", "go ", "rust", "java",
+  "postgres", "mysql", "sqlite", "mongodb", "redis",
+  "graphql", "rest", "grpc", "websocket",
+  "docker", "kubernetes", "terraform",
+  "typescript", "javascript", "tailwind", "prisma",
+];
 
 function isArchitectureNote(decision: string): boolean {
   const lower = decision.toLowerCase();
-  return ARCH_KEYWORDS.some((kw) => lower.includes(kw));
+  return ARCH_SIGNALS.some((kw) => lower.includes(kw));
 }
 
 // ─── mergeIntoProjectMemory ───────────────────────────────────────────────────
@@ -62,27 +73,29 @@ export function mergeIntoProjectMemory(
     }
   }
 
-  // ── conventions: deduplicated exact match, max 20 ─────────────────────────
-  const conventions = [...existing.conventions];
-  for (const decision of digest.decisions) {
-    if (!conventions.includes(decision)) {
-      conventions.push(decision);
-    }
-  }
-  const trimmedConventions = conventions.slice(-20);
-
   // ── architecture: append architecture-note decisions (no duplicates) ───────
   const existingLines = existing.architecture
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   const archLines = [...existingLines];
+  const archSet = new Set(archLines);
   for (const decision of digest.decisions) {
-    if (isArchitectureNote(decision) && !archLines.includes(decision.trim())) {
+    if (isArchitectureNote(decision) && !archSet.has(decision.trim())) {
       archLines.push(decision.trim());
+      archSet.add(decision.trim());
     }
   }
   const architecture = archLines.join("\n");
+
+  // ── conventions: non-architecture decisions, deduplicated, max 20 ─────────
+  const conventions = [...existing.conventions];
+  for (const decision of digest.decisions) {
+    if (!archSet.has(decision.trim()) && !conventions.includes(decision)) {
+      conventions.push(decision);
+    }
+  }
+  const trimmedConventions = conventions.slice(-20);
 
   const updated: ProjectMemory = {
     project_id: existing.project_id,

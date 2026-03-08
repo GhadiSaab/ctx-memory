@@ -66,7 +66,8 @@ describe("detectPatterns", () => {
 
 describe("confirmation pattern", () => {
   it("detects assistant proposal immediately followed by user short-confirmation", () => {
-    const proposal = "x".repeat(201); // length > 200
+    // Content must contain a decision signal for extractedDecision to be non-null
+    const proposal = "I'll use React with TypeScript. " + "x".repeat(170); // length > 200, has decision signal
     const messages = [
       wm("assistant", proposal, 0.7),                            // weight > 0.6, length > 200
       wm("user", "yes", 0.3, "noise", { isShortConfirmation: true }),
@@ -106,15 +107,17 @@ describe("confirmation pattern", () => {
     expect(detectPatterns(messages)).toHaveLength(0);
   });
 
-  it("extractedDecision is exactly 80 chars when content is longer than 80 chars", () => {
-    // truncate(s, 80) = s.slice(0, 79) + "…" = 79 chars + 1 ellipsis = 80 chars total
-    const proposal = "a".repeat(201);
+  it("extractedDecision is at most 120 chars when content is longer than 120 chars", () => {
+    // Decision sentence is capped at 120 chars
+    const proposal = "I'll use React with TypeScript for the frontend. " + "x".repeat(200);
     const messages = [
       wm("assistant", proposal, 0.8),
       wm("user", "perfect", 0.3, "noise", { isShortConfirmation: true }),
     ];
     const [p] = detectPatterns(messages);
-    expect(p.extractedDecision!.length).toBe(80);
+    expect(p).toBeDefined();
+    expect(p.extractedDecision).not.toBeNull();
+    expect(p.extractedDecision!.length).toBeLessThanOrEqual(120);
   });
 });
 
@@ -329,7 +332,8 @@ describe("struggle pattern", () => {
 
 describe("message exclusivity", () => {
   it("a message index appears in at most one pattern", () => {
-    const proposal = "x".repeat(201);
+    // Must contain a decision signal so confirmation pattern fires
+    const proposal = "I'll use SQLite for the database. " + "x".repeat(170);
     const messages = [
       wm("assistant", proposal, 0.8),
       wm("user", "yes", 0.3, "noise", { isShortConfirmation: true }),

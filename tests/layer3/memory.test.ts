@@ -203,17 +203,18 @@ describe("mergeIntoProjectMemory — known_issues", () => {
 // ─── conventions ──────────────────────────────────────────────────────────────
 
 describe("mergeIntoProjectMemory — conventions", () => {
-  it("appends new decisions as conventions", () => {
-    const digest = makeDigest({ decisions: ["Use Postgres over SQLite"] });
+  it("appends new decisions as conventions (non-architecture decisions)", () => {
+    // "Add error handling" has no tech/arch signals — goes to conventions
+    const digest = makeDigest({ decisions: ["Add error handling everywhere"] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
-    expect(result.conventions).toContain("Use Postgres over SQLite");
+    expect(result.conventions).toContain("Add error handling everywhere");
   });
 
   it("does not duplicate existing conventions (exact match)", () => {
-    const existing = makeMemory({ conventions: ["Use Postgres over SQLite"] });
-    const digest = makeDigest({ decisions: ["Use Postgres over SQLite"] });
+    const existing = makeMemory({ conventions: ["Add error handling everywhere"] });
+    const digest = makeDigest({ decisions: ["Add error handling everywhere"] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
-    expect(result.conventions.filter((c) => c === "Use Postgres over SQLite")).toHaveLength(1);
+    expect(result.conventions.filter((c) => c === "Add error handling everywhere")).toHaveLength(1);
   });
 
   it("keeps at most 20 conventions, dropping oldest", () => {
@@ -227,11 +228,12 @@ describe("mergeIntoProjectMemory — conventions", () => {
   });
 
   it("preserves existing conventions not in the new digest", () => {
-    const existing = makeMemory({ conventions: ["Use TypeScript strictly"] });
-    const digest = makeDigest({ decisions: ["Use Postgres"] });
+    const existing = makeMemory({ conventions: ["Always write tests first"] });
+    // "Keep commits atomic" has no tech/arch signals — goes to conventions
+    const digest = makeDigest({ decisions: ["Keep commits atomic"] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
-    expect(result.conventions).toContain("Use TypeScript strictly");
-    expect(result.conventions).toContain("Use Postgres");
+    expect(result.conventions).toContain("Always write tests first");
+    expect(result.conventions).toContain("Keep commits atomic");
   });
 });
 
