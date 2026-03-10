@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { resolveOutcome, findRealBinary, normalizeToolName, injectAntigravityContext } from "../../src/wrapper/index.js";
+import {
+  resolveOutcome,
+  findRealBinary,
+  normalizeToolName,
+  injectAntigravityContext,
+  findAntigravitySubcommand,
+} from "../../src/wrapper/index.js";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -94,6 +100,26 @@ describe("normalizeToolName", () => {
 
   it("leaves antigravity unchanged", () => {
     expect(normalizeToolName("antigravity")).toBe("antigravity");
+  });
+});
+
+describe("findAntigravitySubcommand", () => {
+  it("finds chat when global options come first", () => {
+    expect(findAntigravitySubcommand([
+      "--user-data-dir",
+      "/tmp/profile",
+      "--transient",
+      "chat",
+      "hello",
+    ])).toBe("chat");
+  });
+
+  it("returns serve-web for non-chat subcommands", () => {
+    expect(findAntigravitySubcommand(["--profile", "test", "serve-web"])).toBe("serve-web");
+  });
+
+  it("returns null when there is no subcommand", () => {
+    expect(findAntigravitySubcommand(["--transient", "--verbose"])).toBeNull();
   });
 });
 

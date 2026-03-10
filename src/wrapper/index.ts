@@ -196,8 +196,49 @@ const BYPASS_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
   antigravity: new Set(["serve-web", "tunnel"]),
 };
 
+const ANTIGRAVITY_OPTIONS_WITH_VALUES = new Set([
+  "-d",
+  "--diff",
+  "-m",
+  "--merge",
+  "-a",
+  "--add",
+  "--remove",
+  "-g",
+  "--goto",
+  "--locale",
+  "--user-data-dir",
+  "--profile",
+  "--extensions-dir",
+  "--category",
+  "--install-extension",
+  "--uninstall-extension",
+  "--log",
+  "--sync",
+  "--inspect-extensions",
+  "--inspect-brk-extensions",
+  "--locate-shell-integration-path",
+  "--add-mcp",
+]);
+
+export function findAntigravitySubcommand(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg) continue;
+    if (ANTIGRAVITY_OPTIONS_WITH_VALUES.has(arg)) {
+      i++;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return arg;
+  }
+  return null;
+}
+
 function shouldBypass(tool: string, args: string[]): boolean {
-  const sub = args[0];
+  const sub = tool === "antigravity"
+    ? findAntigravitySubcommand(args)
+    : args[0];
   if (tool === "antigravity" && sub !== "chat") return true;
   if (!sub || sub.startsWith("-")) return false;
   return BYPASS_SUBCOMMANDS[tool]?.has(sub) ?? false;
