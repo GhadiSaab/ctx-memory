@@ -11,16 +11,18 @@
 Antigravity is Google's rebranding of Windsurf (by Codeium, acquired by Google). Its AI engine is called Cascade. It is a VS Code-based GUI editor with a `chat` CLI subcommand. Key facts that drive the design:
 
 - `antigravity chat "prompt"` sends the prompt to a running Electron GUI instance via IPC and **exits almost immediately** — it does not block until the session ends
-- MCP is supported via `~/.config/Antigravity/User/mcp.json` (format: `{ "servers": { ... } }`) — already configured by the setup wizard
+- MCP is supported via `~/.config/Antigravity/User/mcp.json` (format: `{ "servers": { ... } }`) — already configured by the setup wizard. The Electron GUI process connects to this MCP server independently; it is **not** the wrapper's in-process stdio sidecar.
 - Antigravity has **no hooks API** (no PostToolUse equivalent like Claude Code)
-- Chat sessions are persisted in `~/.config/Antigravity/User/workspaceStorage/<hash>/state.vscdb` under the key `chat.ChatSessionStore.index`
+- Chat sessions (called "trajectories" internally) are persisted in `~/.config/Antigravity/User/workspaceStorage/<hash>/state.vscdb` under the key `chat.ChatSessionStore.index`
 - Per-workspace rules are read from `.windsurf/rules/*.md` (Windsurf convention inherited by Antigravity)
+- Cascade internally calls sessions "trajectories" and messages/steps "cortex steps"; the VS Code state DB stores a simplified view
 
 ### What the Previous Implementation Got Wrong
 
 1. **Rules file written to `.agent/rules/`** — Antigravity does not read this path. The correct path is `.windsurf/rules/`.
 2. **Session end triggered by CLI process exit** — the CLI exits fast (before any AI response), so `toolProc.on("exit")` fires before any useful data exists.
 3. **No post-hoc session reader** — unlike Claude (JSONL) and Codex (SQLite), there was no mechanism to read what Cascade actually said/did during the session.
+4. **Existing test for `injectAntigravityContext` asserts the wrong path** — it checks `.agent/rules/llm-memory.md` and must be updated.
 
 ---
 
@@ -32,34 +34,88 @@ Three concrete changes to the existing codebase:
 
 Post-hoc session reader. Called at true session end (Electron GUI exit). Responsibilities:
 
-- `findWorkspaceHash(cwd)`: scans `~/.config/Antigravity/User/workspaceStorage/*/workspace.json`, finds the entry whose `folder` field (a `file://` URI) matches `cwd`, returns the hash directory name
-- `readAntigravitySession(cwd, sessionStartMs)`: opens the matched `state.vscdb`, reads `chat.ChatSessionStore.index`, filters sessions/messages created after `sessionStartMs`, returns `Message[]`
-- Returns `{ messages: Message[] }` — no events (tool call details are not exposed post-hoc; events come from MCP `store_event` calls only)
+- `findWorkspaceHash(storageDir, cwd)`: scans `<storageDir>/*/workspace.json` (default: `~/.config/Antigravity/User/workspaceStorage`), finds the entry whose `folder` field (a `file://` URI) matches `cwd`, returns the hash directory name or `null`
+- `readAntigravitySession(cwd, sessionStartMs, storageDir?)`: opens the matched `state.vscdb`, reads `chat.ChatSessionStore.index`, filters messages with `timestamp >= sessionStartMs`, maps them to `Message[]`
+- Returns `{ messages: Message[] }` — no events (tool call details not available post-hoc; events come from MCP `store_event` calls only)
+
+`storageDir` defaults to `~/.config/Antigravity/User/workspaceStorage` but is injectable for testing.
+
+**`chat.ChatSessionStore.index` schema** (inferred from VS Code chat storage conventions and Windsurf/Cascade internals):
+
+```jsonc
+{
+  "version": 1,
+  "entries": {
+    "<sessionId>": {
+      "sessionId": "<uuid>",
+      "creationDate": 1741123200000,   // ms timestamp
+      "requests": [
+        {
+          "message": {
+            "text": "user prompt text",
+            "parts": [{ "text": "user prompt text" }]
+          },
+          "response": {
+            "value": [{ "value": "assistant response text" }]
+          },
+          "timestamp": 1741123210000   // ms timestamp on individual turn
+        }
+      ]
+    }
+  }
+}
+```
+
+The reader maps each `requests` entry to two `Message` objects: `{ role: "user", content: request.message.text }` and `{ role: "assistant", content: request.response.value[0].value }`. Timestamp filtering uses `request.timestamp` (per-turn) if present, falling back to the session `creationDate`.
+
+**Important:** this schema is inferred and must be validated against a real session on first real-world test. The reader must be written defensively — unknown shapes return `[]` without throwing.
 
 ### 2. Modified: `src/wrapper/index.ts`
 
-Three changes:
-
 **a) `injectAntigravityContext` — fix rules path:**
 - Write to `.windsurf/rules/llm-memory.md` (primary — what Antigravity actually reads)
-- Also write to `.agent/rules/llm-memory.md` (fallback — in case future versions support it)
-- Rules file content: project memory from previous sessions + MCP instructions (session_id, project_id, how to call `record_turn`)
+- Also write to `.agent/rules/llm-memory.md` (fallback)
+- Rules file content unchanged: project memory + MCP instructions (session_id, project_id, how to call `record_turn`)
 
-**b) `findAntigravityElectronPid(cwd)` — new function:**
-- Searches running processes for an Antigravity Electron process
-- Matches by workspace path in process args or by `--user-data-dir`
-- Returns the PID, or `null` if not found
+**b) `findAntigravityElectronPid(cwd, processList?)` — new function:**
+- Accepts an optional `processList` provider `() => Array<{ pid: number; cmd: string }>` for testability (defaults to reading `/proc/*/cmdline` on Linux, `ps aux` output on other platforms)
+- Searches for a process with `antigravity` in the command and the workspace `cwd` path (or `--user-data-dir` matching `~/.config/Antigravity`) in its args
+- Returns `number | null`
 
-**c) Session lifetime tracking:**
-- After the CLI child process exits quickly, call `findAntigravityElectronPid(cwd)`
-- If a PID is found: poll every 2 seconds until it exits, then fire `signalSessionEnd()`
-- If no PID found: fire `signalSessionEnd()` immediately (treat CLI exit as session end)
-- `signalSessionEnd()` for Antigravity calls `readAntigravitySession(cwd, sessionStartMs)` and seeds messages buffer if MCP captured nothing
+**c) Session lifetime tracking — replace CLI exit trigger:**
+
+```
+// After CLI child exits quickly:
+const pid = findAntigravityElectronPid(cwd);
+if (pid === null) {
+  // GUI not running — fire session end immediately
+  await signalSessionEnd(...);
+} else {
+  // Poll until Electron exits or timeout
+  const MAX_WAIT_MS = 8 * 60 * 60 * 1000; // 8 hours
+  const POLL_INTERVAL_MS = 2000;
+  const deadline = Date.now() + MAX_WAIT_MS;
+  const poll = setInterval(async () => {
+    const stillAlive = isProcessAlive(pid);
+    const timedOut = Date.now() >= deadline;
+    if (!stillAlive || timedOut) {
+      clearInterval(poll);
+      await signalSessionEnd(...);
+    }
+  }, POLL_INTERVAL_MS);
+}
+```
+
+`isProcessAlive(pid)`: sends signal 0 (`process.kill(pid, 0)`) — returns `true` if process exists, `false` if ESRCH.
+
+The 8-hour timeout handles the case where a user keeps the window open all day. On timeout, the pipeline runs with whatever MCP-captured data exists so far.
+
+**d) MCP sidecar: NOT spawned for Antigravity**
+`supportsMcp` stays `tool === "claude" || tool === "opencode"`. Antigravity's MCP calls go to a separately-running `llm-memory` MCP server (configured via `mcp.json`), not the wrapper's in-process sidecar. This means live MCP capture goes directly to DB (via the standalone MCP server process) and does **not** use in-memory buffers. Consequence: `messageBuffers`/`eventBuffers` will always be empty for Antigravity — the `state.vscdb` post-hoc reader is the real data source. MCP calls from Cascade still persist to DB correctly via the standalone server.
 
 ### 3. No changes needed elsewhere
 
-- MCP handlers already accept `tool: "antigravity"` and handle `record_turn` / `store_message`
-- DB schema, Layer 1/2/3 pipeline, CLI setup wizard — all unchanged
+- MCP handlers, DB schema, Layer 1/2/3 pipeline, CLI setup wizard — all unchanged
 - `mcp.json` registration already correct
 
 ---
@@ -75,26 +131,27 @@ antigravity chat "prompt"
         │
    [wrapper: createSession() in DB]
         │
-   [wrapper: spawns CLI child — exits fast]
+   [wrapper: spawns CLI child — exits fast ~immediately]
         │
    [wrapper: findAntigravityElectronPid(cwd)]
         │
-        ├─ PID found → poll every 2s until Electron exits
-        └─ PID not found → treat CLI exit as session end
+        ├─ PID found → start polling loop (max 8h)
+        └─ PID not found → fire signalSessionEnd() immediately
         │
-   [meanwhile: Cascade reads rules file]
-        ├─ calls get_project_memory MCP tool at session start
-        └─ calls record_turn / store_message during session (live capture)
+   [meanwhile: Cascade reads .windsurf/rules/llm-memory.md]
+        ├─ calls get_project_memory MCP tool at session start (via standalone MCP server → DB)
+        └─ calls record_turn / store_message during session (→ DB directly, not via buffers)
         │
-   [Electron GUI exits (window closed / killed / crashed)]
+   [Electron GUI exits OR 8h timeout]
         │
    [signalSessionEnd()]
         ├─ readAntigravitySession(cwd, sessionStartMs)
         │       ├─ find workspaceStorage hash for cwd
         │       ├─ read state.vscdb → chat.ChatSessionStore.index
-        │       └─ filter entries created after sessionStartMs → Message[]
+        │       └─ filter entries with timestamp >= sessionStartMs → Message[]
         │
-        ├─ if messageBuffer empty AND reader returned messages → seedBuffers()
+        ├─ messageBuffers.get(sessionId) is always empty for Antigravity
+        │   → if reader returned messages, seed them as messages buffer
         │
         └─→ handleEndSession() → Layer1→2→3 pipeline → digest + memory_doc written
 ```
@@ -107,14 +164,16 @@ All reader and injection logic is best-effort — never throws, never blocks the
 
 | Scenario | Behavior |
 |---|---|
-| `state.vscdb` not found (no workspace match) | Skip post-hoc read; rely on MCP-captured messages only |
+| `state.vscdb` not found (no workspace hash match) | Skip post-hoc read; pipeline runs with empty messages |
 | `state.vscdb` parse/read error | Log warning, return `[]` |
-| No sessions newer than `sessionStartMs` | Return `[]`; pipeline still runs with MCP data |
-| Rules write fails (permissions, read-only fs) | Log warning, continue — session still works via MCP |
+| Schema doesn't match expected shape | Return `[]` (defensive parsing) |
+| No sessions newer than `sessionStartMs` | Return `[]`; pipeline still runs |
+| Rules write fails (permissions, read-only fs) | Log warning, continue — MCP still works |
 | Electron PID not found | Fire session end immediately on CLI exit |
-| Multiple Antigravity windows open | Match by workspace path; if ambiguous, use most recently started |
-| Electron already exited before PID lookup | Treat as immediate session end |
-| SIGKILL (uncatchable) | Best-effort only — pipeline may not fire; MCP-captured data already in DB |
+| Multiple Antigravity windows open | Match by workspace path in process args; if ambiguous, skip polling (use CLI exit trigger) |
+| Electron already exited before PID lookup | `isProcessAlive` returns false immediately → fire session end |
+| SIGKILL (uncatchable) | Polling detects process gone within 2s → session end fires normally |
+| 8-hour timeout | Fire session end with whatever data exists |
 
 ---
 
@@ -122,19 +181,24 @@ All reader and injection logic is best-effort — never throws, never blocks the
 
 ### New: `tests/wrapper/antigravity.test.ts`
 
-- `findWorkspaceHash`: temp dir with mock `workspace.json` files → returns correct hash for matching `cwd`, returns `null` for no match
-- `readAntigravitySession`: mock `state.vscdb` with known `chat.ChatSessionStore.index` JSON → correct `Message[]` filtered by `sessionStartMs`
-- Empty `entries` → returns `[]`
-- Malformed JSON in DB → returns `[]` without throwing
+- `findWorkspaceHash`: temp dir with 3 mock `workspace.json` files → returns correct hash for matching `cwd`, returns `null` for no match, handles missing `folder` field
+- `readAntigravitySession`: mock `state.vscdb` with known `chat.ChatSessionStore.index` JSON:
+  - Returns correct `Message[]` (user + assistant pairs) filtered by `sessionStartMs`
+  - Empty `entries` → returns `[]`
+  - Malformed JSON / wrong schema → returns `[]` without throwing
+  - Missing `response` on a request → skips that turn gracefully
+- `findAntigravityElectronPid`: injected mock process list:
+  - Finds correct PID when `antigravity` process with matching cwd exists
+  - Returns `null` when no match
 
-### Extended: `tests/wrapper/index.test.ts`
+### Updated: `tests/wrapper/index.test.ts`
 
-- `injectAntigravityContext` writes to both `.windsurf/rules/llm-memory.md` AND `.agent/rules/llm-memory.md`
-- `findAntigravityElectronPid`: tested with injected mock process list (function accepts a process-list provider for testability)
+- **Update** existing `injectAntigravityContext` test: change assertion from `.agent/rules/llm-memory.md` to `.windsurf/rules/llm-memory.md`
+- **Add** assertion that `.agent/rules/llm-memory.md` is also written (fallback)
 
 ### No new integration test
 
-The existing session pipeline integration test covers Layer1→2→3. The Antigravity reader feeds into the same `seedBuffers` path already tested by the Codex integration path.
+The existing session pipeline integration test covers Layer1→2→3. The Antigravity reader feeds into the same `seedBuffers` path already covered by the Codex integration path tests.
 
 ---
 
@@ -143,6 +207,12 @@ The existing session pipeline integration test covers Layer1→2→3. The Antigr
 | File | Change |
 |---|---|
 | `src/wrapper/antigravity.ts` | **New** — `findWorkspaceHash`, `readAntigravitySession` |
-| `src/wrapper/index.ts` | Fix `injectAntigravityContext` paths; add `findAntigravityElectronPid`; fix session lifetime tracking |
-| `tests/wrapper/antigravity.test.ts` | **New** — unit tests for reader functions |
-| `tests/wrapper/index.test.ts` | Extend with new Antigravity wrapper tests |
+| `src/wrapper/index.ts` | Fix `injectAntigravityContext` paths; add `findAntigravityElectronPid`, `isProcessAlive`; fix session lifetime tracking (poll Electron PID, 8h timeout) |
+| `tests/wrapper/antigravity.test.ts` | **New** — unit tests for reader and PID-finder |
+| `tests/wrapper/index.test.ts` | Update existing `injectAntigravityContext` test + add fallback path assertion |
+
+---
+
+## Open Question (for first real-world test)
+
+The `chat.ChatSessionStore.index` schema is inferred. On first real Antigravity chat session, inspect the actual JSON in `state.vscdb` and update `readAntigravitySession` to match the real field names. The defensive parser will return `[]` safely if the schema doesn't match — this just means no post-hoc messages until the schema is confirmed.
