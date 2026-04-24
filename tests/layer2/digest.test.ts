@@ -43,12 +43,38 @@ function errorEvent(message: string): ExtractedEvent {
   };
 }
 
+function testRunEvent(command: string, failed = 0): ExtractedEvent {
+  return {
+    id: "eid" as any,
+    session_id: "sid-1" as any,
+    type: "test_run",
+    payload: { type: "test_run", command, passed: failed > 0 ? 0 : 12, failed, durationMs: null },
+    weight: 0.7,
+    timestamp: Date.now() as any,
+    source: "mcp",
+  };
+}
+
 // ─── Field mapping ────────────────────────────────────────────────────────────
 
 describe("generateDigest — field mapping", () => {
   it("maps goal from layer1.goal", () => {
     const d = generateDigest(makeLayer1({ goal: "Build login flow" }), "completed", 0);
     expect(d.goal).toBe("Build login flow");
+  });
+
+  it("creates a concise summary from goal, files, and validation", () => {
+    const d = generateDigest(
+      makeLayer1({
+        goal: "Please improve the Layer 3 memory so agents get useful handoff details",
+        events: [fileEvent("src/layer3/memory.ts", "file_modified"), testRunEvent("npm run build")],
+      }),
+      "completed",
+      0
+    );
+    expect(d.summary).toContain("Updated src/layer3/memory.ts");
+    expect(d.summary).toContain("improve Layer 3 project memory quality");
+    expect(d.summary).toContain("Validation: npm run build passed");
   });
 
   it("falls back to first decision when goal is null", () => {
@@ -78,6 +104,11 @@ describe("generateDigest — field mapping", () => {
       "completed", 0
     );
     expect(d.errors_encountered).toEqual(["Build failed", "Test timeout"]);
+  });
+
+  it("maps validation from test events", () => {
+    const d = generateDigest(makeLayer1({ events: [testRunEvent("npm test", 2)] }), "completed", 0);
+    expect(d.validation).toEqual(["npm test failed"]);
   });
 
   it("maps keywords from layer1.keywords", () => {
@@ -210,9 +241,11 @@ describe("generateDigest — token budget", () => {
     // Recompute expected tokens from the returned fields (same formula as implementation)
     const draft = {
       goal: d.goal,
+      summary: d.summary,
       files_modified: d.files_modified,
       decisions: d.decisions,
       errors_encountered: d.errors_encountered,
+      validation: d.validation,
       keywords: d.keywords,
       outcome: d.outcome,
       estimated_tokens: 0,

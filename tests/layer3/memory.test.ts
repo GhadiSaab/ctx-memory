@@ -13,6 +13,7 @@ function makeMemory(overrides: Partial<ProjectMemory> = {}): ProjectMemory {
     project_id: "proj-1" as any,
     memory_doc: "",
     architecture: "",
+    how_to_test: [],
     conventions: [],
     known_issues: [],
     recent_work: [],
@@ -26,9 +27,11 @@ function makeDigest(overrides: Partial<Layer2Digest> = {}): Layer2Digest {
     id: "d-1" as any,
     session_id: "sid-1" as any,
     goal: "Implement authentication",
-    files_modified: [],
+    summary: "Implemented authentication",
+    files_modified: ["src/auth.ts"],
     decisions: [],
     errors_encountered: [],
+    validation: [],
     outcome: "completed",
     keywords: ["authentication", "middleware"],
     estimated_tokens: 100,
@@ -40,11 +43,11 @@ function makeDigest(overrides: Partial<Layer2Digest> = {}): Layer2Digest {
 // ─── recent_work ─────────────────────────────────────────────────────────────
 
 describe("mergeIntoProjectMemory — recent_work", () => {
-  it("prepends a new entry with the digest goal as summary", () => {
+  it("prepends a new entry with the digest summary", () => {
     const mem = makeMemory();
-    const digest = makeDigest({ goal: "Build login flow" });
+    const digest = makeDigest({ goal: "Build login flow", summary: "Built login flow" });
     const result = mergeIntoProjectMemory(mem, digest, "sid-new");
-    expect(result.recent_work[0].summary).toBe("Build login flow");
+    expect(result.recent_work[0].summary).toBe("Built login flow");
     expect(result.recent_work[0].session_id).toBe("sid-new");
   });
 
@@ -54,7 +57,7 @@ describe("mergeIntoProjectMemory — recent_work", () => {
         { id: "e1" as any, project_id: "proj-1" as any, session_id: "old" as any, summary: "Old work", date: 0 as any },
       ],
     });
-    const result = mergeIntoProjectMemory(existing, makeDigest({ goal: "New work" }), "sid-new");
+    const result = mergeIntoProjectMemory(existing, makeDigest({ summary: "New work" }), "sid-new");
     expect(result.recent_work[0].summary).toBe("New work");
     expect(result.recent_work[1].summary).toBe("Old work");
   });
@@ -71,7 +74,7 @@ describe("mergeIntoProjectMemory — recent_work", () => {
         date: (9 - i) as any,
       })),
     });
-    const result = mergeIntoProjectMemory(existing, makeDigest({ goal: "Work 10" }), "sid-10");
+    const result = mergeIntoProjectMemory(existing, makeDigest({ summary: "Work 10" }), "sid-10");
     expect(result.recent_work).toHaveLength(10);
     expect(result.recent_work[0].summary).toBe("Work 10");
     // The oldest entry ("Work 0") is at the tail and gets dropped by slice(0, 10)
@@ -79,7 +82,23 @@ describe("mergeIntoProjectMemory — recent_work", () => {
   });
 
   it("skips recent_work entry when digest.goal is null", () => {
-    const result = mergeIntoProjectMemory(makeMemory(), makeDigest({ goal: null }), "sid-1");
+    const result = mergeIntoProjectMemory(makeMemory(), makeDigest({ goal: null, summary: null }), "sid-1");
+    expect(result.recent_work).toHaveLength(0);
+  });
+
+  it("skips recent_work entry for a raw prompt with no substantive work", () => {
+    const result = mergeIntoProjectMemory(
+      makeMemory(),
+      makeDigest({
+        goal: "what mcps do you have",
+        summary: "what mcps do you have",
+        files_modified: [],
+        decisions: [],
+        errors_encountered: [],
+        validation: [],
+      }),
+      "sid-1"
+    );
     expect(result.recent_work).toHaveLength(0);
   });
 
@@ -235,6 +254,12 @@ describe("mergeIntoProjectMemory — conventions", () => {
     expect(result.conventions).toContain("Always write tests first");
     expect(result.conventions).toContain("Keep commits atomic");
   });
+
+  it("does not promote transient first-person plans as conventions", () => {
+    const digest = makeDigest({ decisions: ["I'll use the MCP tool to store that message."] });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.conventions).not.toContain("I'll use the MCP tool to store that message.");
+  });
 });
 
 // ─── architecture ─────────────────────────────────────────────────────────────
@@ -277,6 +302,30 @@ describe("mergeIntoProjectMemory — architecture", () => {
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.architecture).toContain("SWITCHED to using bun instead of node");
   });
+
+  it("rejects transient first-person architecture-looking text", () => {
+    const digest = makeDigest({ decisions: ["I'll use the MCP tool to store that message."] });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.architecture).not.toContain("I'll use the MCP tool to store that message.");
+  });
+});
+
+// ─── how_to_test ──────────────────────────────────────────────────────────────
+
+describe("mergeIntoProjectMemory — how_to_test", () => {
+  it("records validation commands from digest validation notes", () => {
+    const digest = makeDigest({ validation: ["npm run build passed", "npm test failed"] });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.how_to_test).toContain("npm run build");
+    expect(result.how_to_test).toContain("npm test");
+  });
+
+  it("deduplicates validation commands", () => {
+    const existing = makeMemory({ how_to_test: ["npm run build"] });
+    const digest = makeDigest({ validation: ["npm run build passed"] });
+    const result = mergeIntoProjectMemory(existing, digest, "sid-1");
+    expect(result.how_to_test.filter((command) => command === "npm run build")).toHaveLength(1);
+  });
 });
 
 // ─── updatedAt ───────────────────────────────────────────────────────────────
@@ -293,19 +342,20 @@ describe("mergeIntoProjectMemory — updatedAt", () => {
 
 describe("mergeIntoProjectMemory — memory_doc", () => {
   it("sets memory_doc to serialized markdown", () => {
-    const digest = makeDigest({ goal: "Build auth" });
+    const digest = makeDigest({ goal: "Build auth", summary: "Built auth" });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.memory_doc).toContain("# Project Memory");
-    expect(result.memory_doc).toContain("Build auth");
+    expect(result.memory_doc).toContain("Built auth");
   });
 });
 
 // ─── serializeMemory ──────────────────────────────────────────────────────────
 
 describe("serializeMemory", () => {
-  it("produces a string containing all four section headers", () => {
+  it("produces a string containing all section headers", () => {
     const s = serializeMemory(makeMemory());
     expect(s).toContain("## Architecture");
+    expect(s).toContain("## How to Test");
     expect(s).toContain("## Known Issues");
     expect(s).toContain("## Conventions");
     expect(s).toContain("## Recent Work");
@@ -350,6 +400,13 @@ describe("serializeMemory", () => {
     expect(s).toContain("- Prefer functional style");
   });
 
+  it("renders how_to_test as bullet list", () => {
+    const mem = makeMemory({ how_to_test: ["npm run build", "npm test"] });
+    const s = serializeMemory(mem);
+    expect(s).toContain("- npm run build");
+    expect(s).toContain("- npm test");
+  });
+
   it("renders recent work with date prefix", () => {
     const mem = makeMemory({
       recent_work: [
@@ -375,6 +432,7 @@ describe("serializeMemory", () => {
   it("shows placeholder text when sections are empty", () => {
     const s = serializeMemory(makeMemory());
     expect(s).toContain("_No architecture notes yet._");
+    expect(s).toContain("_No test commands recorded yet._");
     expect(s).toContain("_No known issues._");
     expect(s).toContain("_No conventions recorded yet._");
     expect(s).toContain("_No recent work._");
@@ -398,6 +456,14 @@ describe("deserializeMemory", () => {
     const restored = deserializeMemory(doc, "proj-1");
     expect(restored.conventions).toContain("Use TypeScript");
     expect(restored.conventions).toContain("Prefer functional style");
+  });
+
+  it("round-trips how_to_test", () => {
+    const mem = makeMemory({ how_to_test: ["npm run build", "npm test"] });
+    const doc = serializeMemory(mem);
+    const restored = deserializeMemory(doc, "proj-1");
+    expect(restored.how_to_test).toContain("npm run build");
+    expect(restored.how_to_test).toContain("npm test");
   });
 
   it("round-trips known issues — open and resolved", () => {
@@ -440,6 +506,7 @@ describe("deserializeMemory", () => {
     const doc = serializeMemory(makeMemory());
     const restored = deserializeMemory(doc, "proj-1");
     expect(restored.conventions).toEqual([]);
+    expect(restored.how_to_test).toEqual([]);
     expect(restored.known_issues).toEqual([]);
     expect(restored.recent_work).toEqual([]);
     expect(restored.architecture).toBe("");

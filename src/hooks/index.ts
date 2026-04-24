@@ -1,7 +1,7 @@
 // Hook config writers — read existing config, deep-merge hook entries, write back.
 // Never overwrites unrelated user config keys.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 export { buildClaudeHookConfig } from "./claude.js";
@@ -118,23 +118,13 @@ export function writeGeminiHooks(geminiDir: string): void {
 // ─── writeOpenCodeHooks ───────────────────────────────────────────────────────
 
 /**
- * Merges llm-memory hooks into ~/.opencode/config.json.
- * @param openCodeDir  path to the ~/.opencode directory
+ * Writes the llm-memory OpenCode plugin into ~/.config/opencode/plugins.
+ * @param openCodeDir  path to the OpenCode config directory
  */
 export function writeOpenCodeHooks(openCodeDir: string): void {
-  const filePath = join(openCodeDir, "config.json");
-  const existing = readJson(filePath);
   const hookConfig = buildOpenCodeHookConfig();
+  const pluginPath = join(openCodeDir, hookConfig.pluginPath);
 
-  const merged = {
-    ...existing,
-    hooks: {
-      ...(typeof existing["hooks"] === "object" && existing["hooks"] !== null
-        ? (existing["hooks"] as Record<string, unknown>)
-        : {}),
-      ...hookConfig.hooks,
-    },
-  };
-
-  writeJson(filePath, merged);
+  mkdirSync(join(openCodeDir, "plugins"), { recursive: true });
+  writeFileSync(pluginPath, hookConfig.content, "utf8");
 }

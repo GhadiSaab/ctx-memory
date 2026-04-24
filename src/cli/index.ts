@@ -130,7 +130,7 @@ function registerClaudeMcp(receiverPath: string): void {
  */
 function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
   const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
-  const configPath = path.join(openCodeDir, "config.json");
+  const configPath = path.join(openCodeDir, "opencode.json");
 
   let existing: Record<string, unknown> = {};
   try {
@@ -147,9 +147,9 @@ function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
       ...existingMcp,
       "llm-memory": {
         type: "local",
-        command: process.execPath,
-        args: [mcpScript],
-        env: { LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? "" },
+        command: [process.execPath, mcpScript],
+        enabled: true,
+        environment: { LLM_MEMORY_DB_PATH: "{env:LLM_MEMORY_DB_PATH}" },
       },
     },
   };
@@ -471,8 +471,8 @@ async function runSetup(): Promise<void> {
     } else if (tool === "gemini") {
       writeGeminiHooks(path.join(homedir(), ".gemini"));
     } else if (tool === "opencode") {
-      writeOpenCodeHooks(path.join(homedir(), ".opencode"));
-      registerOpenCodeMcp(receiverPath, path.join(homedir(), ".opencode"));
+      writeOpenCodeHooks(path.join(homedir(), ".config", "opencode"));
+      registerOpenCodeMcp(receiverPath, path.join(homedir(), ".config", "opencode"));
     } else if (tool === "codex") {
       registerCodexMcp(receiverPath, path.join(homedir(), ".codex", "config.toml"));
     } else if (tool === "antigravity") {

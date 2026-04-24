@@ -52,6 +52,7 @@ export interface DecisionPayload {
 
 export interface BuildAttemptPayload {
   type: "build_attempt";
+  command: string | null;
   success: boolean;
   durationMs: number | null;
   errorSummary: string | null;
@@ -59,6 +60,7 @@ export interface BuildAttemptPayload {
 
 export interface TestRunPayload {
   type: "test_run";
+  command: string | null;
   passed: number;
   failed: number;
   durationMs: number | null;

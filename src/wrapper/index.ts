@@ -20,6 +20,7 @@ import { classifyToolEvent } from "../layer1/events.js";
 import { readCodexSession } from "./codex.js";
 import { readClaudeSession } from "./claude.js";
 import { readAntigravitySession } from "./antigravity.js";
+import { readOpenCodeSession } from "./opencode.js";
 import type { UUID } from "../types/index.js";
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
@@ -102,6 +103,28 @@ async function signalSessionEnd(
         : [];
 
       seedBuffers(sessionId, claudeData.messages, eventsToSeed);
+    }
+  }
+
+  // For OpenCode: read its local SQLite store post-hoc. This captures prompts,
+  // assistant messages, and tool events even when plugin hooks do not inherit
+  // the wrapper's session environment.
+  if ((tool as string) === "opencode") {
+    const openCodeData = readOpenCodeSession(cwd, sessionStartMs);
+    if (openCodeData) {
+      const eventCount = (db.prepare<[string], { count: number }>(
+        "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
+      ).get(sessionId) ?? { count: 0 }).count;
+
+      const stampedMessages = openCodeData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
+      const eventsToSeed = eventCount === 0
+        ? openCodeData.events
+            .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
+            .filter((e): e is NonNullable<typeof e> => e !== null)
+            .map(e => ({ ...e, session_id: sessionId as UUID }))
+        : [];
+
+      seedBuffers(sessionId, stampedMessages, eventsToSeed);
     }
   }
 

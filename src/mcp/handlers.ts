@@ -22,6 +22,7 @@ import {
   searchByKeywords,
   getConfig,
   createProject,
+  getEventsBySession,
 } from "../db/index.js";
 import { classifyToolEvent } from "../layer1/events.js";
 import { processSession } from "../layer1/combiner.js";
@@ -407,10 +408,10 @@ export async function handleEndSession(input: unknown) {
     }
 
     // 3. Layer 1
-    // Events in the buffer are already classified ExtractedEvents — pass them directly
-    // rather than re-routing through classifyToolEvent (which would return null for event type names).
+    // Events may arrive through live hooks (already persisted) or buffered MCP/post-hoc
+    // extraction. Read the DB after flushing so Layer 2 sees both paths.
     const layer1Raw = processSession(messages, []);
-    layer1Raw.events = events;
+    layer1Raw.events = getEventsBySession(session_id as UUID);
 
     // 3.5. AI summarization (best-effort, requires ANTHROPIC_API_KEY)
     const layer1 = await summarizeLayer1(layer1Raw);
@@ -420,9 +421,11 @@ export async function handleEndSession(input: unknown) {
     writeDigest({
       session_id: session_id as UUID,
       goal: digest.goal,
+      summary: digest.summary,
       files_modified: digest.files_modified,
       decisions: digest.decisions,
       errors_encountered: digest.errors_encountered,
+      validation: digest.validation,
       outcome: digest.outcome,
       keywords: digest.keywords,
       estimated_tokens: digest.estimated_tokens,
@@ -454,6 +457,7 @@ export async function handleEndSession(input: unknown) {
               project_id: project_id as UUID,
               memory_doc: "",
               architecture: "",
+              how_to_test: [],
               conventions: [],
               known_issues: [],
               recent_work: [],

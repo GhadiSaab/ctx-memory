@@ -12,6 +12,7 @@ import {
   getAllProjects,
   buildAntigravityMcpServer,
   writeLegacyAntigravityMcpConfig,
+  registerCodexMcp,
 } from "../../src/cli/index.js";
 
 // ─── detectInstalledTools ─────────────────────────────────────────────────────

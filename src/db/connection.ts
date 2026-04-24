@@ -17,7 +17,7 @@ function resolveDbPath(raw: string): string {
 }
 
 const DB_PATH = resolveDbPath(
-  process.env["LLM_MEMORY_DB_PATH"] ?? "~/.llm-memory/store.db"
+  process.env["LLM_MEMORY_DB_PATH"] || "~/.llm-memory/store.db"
 );
 
 const DB_DIR = DB_PATH.lastIndexOf("/") > 0
@@ -82,9 +82,11 @@ db.exec(`
     id                 TEXT PRIMARY KEY,
     session_id         TEXT NOT NULL UNIQUE REFERENCES sessions(id),
     goal               TEXT,
+    summary            TEXT,
     files_modified     TEXT NOT NULL DEFAULT '[]',
     decisions          TEXT NOT NULL DEFAULT '[]',
     errors_encountered TEXT NOT NULL DEFAULT '[]',
+    validation         TEXT NOT NULL DEFAULT '[]',
     outcome            TEXT,
     keywords           TEXT NOT NULL DEFAULT '[]',
     estimated_tokens   INTEGER NOT NULL,
@@ -127,6 +129,15 @@ db.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS session_embeddings
     USING vec0(embedding FLOAT[384]);
 `);
+
+const digestColumns = db.prepare("PRAGMA table_info(digests)").all() as Array<{ name: string }>;
+const digestColumnNames = new Set(digestColumns.map((column) => column.name));
+if (!digestColumnNames.has("summary")) {
+  db.exec("ALTER TABLE digests ADD COLUMN summary TEXT");
+}
+if (!digestColumnNames.has("validation")) {
+  db.exec("ALTER TABLE digests ADD COLUMN validation TEXT NOT NULL DEFAULT '[]'");
+}
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 

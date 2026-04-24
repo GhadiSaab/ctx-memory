@@ -6,9 +6,10 @@ import { randomUUID } from "node:crypto";
 
 // ─── Architecture keyword detection ───────────────────────────────────────────
 
-// Architecture notes describe stack/design choices — must mention a tech or pattern
+// Architecture notes describe durable stack/design facts, not transient plans.
 const ARCH_SIGNALS = [
-  "we use ", "we'll use ", "i'll use ", "switched to ", "chose ",
+  "we use ", "uses ", "is backed by ", "is stored ", "stored at ",
+  "registered in ", "reads ", "writes ", "resolves ", "switched to ", "chose ",
   "the architecture", "the stack", "the design",
   "instead of ", "rather than ",
   "react", "vue", "angular", "next", "svelte",
@@ -19,9 +20,29 @@ const ARCH_SIGNALS = [
   "typescript", "javascript", "tailwind", "prisma",
 ];
 
+const TRANSIENT_DECISION_PREFIX = /^(i('|’)ll|i will|i('|’)m|we('|’)ll|we will|let('|’)s|use the|maybe|please|can you|help me|i want|i need)\b/i;
+
 function isArchitectureNote(decision: string): boolean {
-  const lower = decision.toLowerCase();
+  const trimmed = decision.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length < 12 || trimmed.length > 220) return false;
+  if (TRANSIENT_DECISION_PREFIX.test(trimmed)) return false;
+  if (lower.includes("mcp tool") || lower.includes("subagent-driven approach")) return false;
   return ARCH_SIGNALS.some((kw) => lower.includes(kw));
+}
+
+function isUsefulConvention(decision: string): boolean {
+  const trimmed = decision.trim();
+  if (trimmed.length < 8 || trimmed.length > 220) return false;
+  return !TRANSIENT_DECISION_PREFIX.test(trimmed);
+}
+
+function validationCommand(note: string): string | null {
+  const trimmed = note.trim();
+  const match = trimmed.match(/^(.+?)\s+(passed|failed)$/i);
+  const command = (match ? match[1] : trimmed).trim();
+  if (!command || /^(tests|build)$/i.test(command)) return null;
+  return command;
 }
 
 // ─── mergeIntoProjectMemory ───────────────────────────────────────────────────
@@ -33,14 +54,18 @@ export function mergeIntoProjectMemory(
 ): ProjectMemory {
   const now = Date.now() as any;
 
-  // ── recent_work: prepend new entry, keep last 10 ──────────────────────────
-  // Skip sessions with no meaningful goal — they pollute the memory doc
-  const hasGoal = digest.goal && digest.goal.trim().length > 0 && digest.goal !== "No goal detected";
-  const newEntry: RecentWorkEntry | null = hasGoal ? {
+  // ── recent_work: prepend substantive work summaries, keep last 10 ─────────
+  const hasSubstantiveWork =
+    digest.files_modified.length > 0 ||
+    digest.decisions.length > 0 ||
+    digest.errors_encountered.length > 0 ||
+    digest.validation.length > 0;
+  const summary = digest.summary?.trim();
+  const newEntry: RecentWorkEntry | null = hasSubstantiveWork && summary ? {
     id: randomUUID() as any,
     project_id: existing.project_id,
     session_id: sessionId as any,
-    summary: digest.goal!,
+    summary,
     date: now,
   } : null;
   const recentWork = (newEntry ? [newEntry, ...existing.recent_work] : existing.recent_work).slice(0, 10);
@@ -88,10 +113,18 @@ export function mergeIntoProjectMemory(
   }
   const architecture = archLines.join("\n");
 
-  // ── conventions: non-architecture decisions, deduplicated, max 20 ─────────
+  // ── how_to_test: validation commands observed in successful sessions ──────
+  const howToTest = [...(existing.how_to_test ?? [])];
+  for (const note of digest.validation) {
+    const command = validationCommand(note);
+    if (command && !howToTest.includes(command)) howToTest.push(command);
+  }
+  const trimmedHowToTest = howToTest.slice(-20);
+
+  // ── conventions: useful non-architecture decisions, deduplicated, max 20 ──
   const conventions = [...existing.conventions];
   for (const decision of digest.decisions) {
-    if (!archSet.has(decision.trim()) && !conventions.includes(decision)) {
+    if (!archSet.has(decision.trim()) && isUsefulConvention(decision) && !conventions.includes(decision)) {
       conventions.push(decision);
     }
   }
@@ -101,6 +134,7 @@ export function mergeIntoProjectMemory(
     project_id: existing.project_id,
     memory_doc: "", // filled by serialize below
     architecture,
+    how_to_test: trimmedHowToTest,
     conventions: trimmedConventions,
     known_issues: knownIssues,
     recent_work: recentWork,
@@ -127,6 +161,17 @@ export function serializeMemory(memory: ProjectMemory): string {
     }
   } else {
     lines.push("_No architecture notes yet._");
+  }
+  lines.push("");
+
+  // How to Test
+  lines.push("## How to Test");
+  if (memory.how_to_test.length === 0) {
+    lines.push("_No test commands recorded yet._");
+  } else {
+    for (const command of memory.how_to_test) {
+      lines.push(`- ${command}`);
+    }
   }
   lines.push("");
 
@@ -193,6 +238,11 @@ export function deserializeMemory(doc: string, projectId: string): ProjectMemory
     .filter((l) => l !== "_No architecture notes yet._");
   const architecture = archLines.join("\n");
 
+  // How to Test
+  const how_to_test = (sections["How to Test"] ?? []).filter(
+    (l) => l !== "_No test commands recorded yet._"
+  );
+
   // Conventions
   const conventions = (sections["Conventions"] ?? []).filter(
     (l) => l !== "_No conventions recorded yet._"
@@ -234,6 +284,7 @@ export function deserializeMemory(doc: string, projectId: string): ProjectMemory
     project_id: projectId as any,
     memory_doc: doc,
     architecture,
+    how_to_test,
     conventions,
     known_issues,
     recent_work,

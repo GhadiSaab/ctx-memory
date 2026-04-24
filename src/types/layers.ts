@@ -26,9 +26,11 @@ export interface Layer2Digest {
   id: UUID;
   session_id: UUID;                   // 1:1 with session
   goal: string | null;
+  summary: string | null;
   files_modified: string[];
   decisions: string[];
   errors_encountered: string[];
+  validation: string[];
   outcome: SessionOutcome | null;
   keywords: string[];
   estimated_tokens: number;           // must stay under 500
@@ -59,6 +61,7 @@ export interface ProjectMemory {
   project_id: UUID;
   memory_doc: string;
   architecture: string;
+  how_to_test: string[];
   conventions: string[];
   known_issues: KnownIssue[];
   recent_work: RecentWorkEntry[];

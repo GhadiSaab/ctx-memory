@@ -53,7 +53,7 @@ function handleFileTool(
   tool: string,
   args: Record<string, unknown>
 ): ExtractedEvent | null {
-  const path = str(args["path"] ?? args["file_path"] ?? args["filepath"] ?? "");
+  const path = str(args["path"] ?? args["file_path"] ?? args["filepath"] ?? args["filePath"] ?? "");
   if (!path) return null;
 
   if (isConfigFile(path)) {
@@ -129,6 +129,7 @@ function handleBashTool(
     return makeEvent(
       {
         type: "test_run",
+        command,
         passed: passedMatch ? parseInt(passedMatch[1], 10) : (success ? 1 : 0),
         failed: failedMatch ? parseInt(failedMatch[1], 10) : (success ? 0 : 1),
         durationMs: null,
@@ -145,6 +146,7 @@ function handleBashTool(
     return makeEvent(
       {
         type: "build_attempt",
+        command,
         success,
         durationMs: null,
         errorSummary,

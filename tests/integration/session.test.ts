@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { clearDb, seedProject } from "../db/helpers.js";
 import { clearBuffers, handleStoreMessage, handleStoreEvent, handleEndSession } from "../../src/mcp/handlers.js";
-import { getProjectById, getDigestBySession, getSessionById, getEventsBySession } from "../../src/db/index.js";
+import { createSession, getProjectById, getDigestBySession, getSessionById, getEventsBySession, insertEvent } from "../../src/db/index.js";
 import type { UUID } from "../../src/types/index.js";
 
 // ─── Mock embedder (non-fatal — step 6 in handleEndSession is best-effort) ───
@@ -112,6 +112,36 @@ describe("integration — Layer 2 digest", () => {
     expect(digest.files_modified).toContain("api/routes.py");
   });
 
+  it("digest includes events that were already persisted by live hooks", async () => {
+    const project = seedProject();
+    const sessionId = "integration-hook-session-001" as UUID;
+    createSession({ id: sessionId, project_id: project.id, tool: "opencode" });
+    insertEvent({
+      session_id: sessionId,
+      type: "file_created",
+      payload: { type: "file_created", path: "opencode-created.txt", operation: "write", diffSummary: null },
+      weight: 0.8,
+      source: "hook",
+    });
+
+    await handleStoreMessage({
+      session_id: sessionId,
+      role: "user",
+      content: "create opencode-created.txt",
+      index: 0,
+    });
+    await handleEndSession({
+      session_id: sessionId,
+      project_id: project.id,
+      tool: "opencode",
+      outcome: "completed",
+      exit_code: 0,
+    });
+
+    const digest = getDigestBySession(sessionId)!;
+    expect(digest.files_modified).toContain("opencode-created.txt");
+  });
+
   it("digest estimated_tokens is within the 500-token budget", async () => {
     const project = seedProject();
     await runSyntheticSession(project.id);
@@ -154,6 +184,7 @@ describe("integration — Layer 3 project memory", () => {
     clearBuffers();
     const SESSION_ID_2 = "integration-test-session-002";
     await handleStoreMessage({ session_id: SESSION_ID_2, role: "user", content: "refactor the refresh token endpoint", index: 0 });
+    await handleStoreEvent({ session_id: SESSION_ID_2, tool: "write_file", args: { path: "api/refresh.ts" }, result: {}, success: true });
     await handleEndSession({
       session_id: SESSION_ID_2,
       project_id: project.id,

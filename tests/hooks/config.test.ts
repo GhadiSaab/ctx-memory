@@ -71,16 +71,16 @@ describe("buildGeminiHookConfig", () => {
 // ─── buildOpenCodeHookConfig ──────────────────────────────────────────────────
 
 describe("buildOpenCodeHookConfig", () => {
-  it("returns tool:before and tool:after string commands", () => {
+  it("returns an OpenCode plugin path and content", () => {
     const config = buildOpenCodeHookConfig();
-    expect(typeof config.hooks["tool:before"]).toBe("string");
-    expect(typeof config.hooks["tool:after"]).toBe("string");
+    expect(config.pluginPath).toBe("plugins/llm-memory.js");
+    expect(config.content).toContain("tool.execute.after");
   });
 
-  it("commands reference hook-receiver", () => {
+  it("plugin content references hook-receiver", () => {
     const config = buildOpenCodeHookConfig();
-    expect(config.hooks["tool:before"]).toContain("hook-receiver");
-    expect(config.hooks["tool:after"]).toContain("hook-receiver");
+    expect(config.content).toContain("hook-receiver");
+    expect(config.content).toContain("LLM_MEMORY_SESSION_ID");
   });
 });
 
@@ -148,23 +148,23 @@ describe("writeGeminiHooks", () => {
 // ─── writeOpenCodeHooks ───────────────────────────────────────────────────────
 
 describe("writeOpenCodeHooks", () => {
-  it("creates config.json when it does not exist", () => {
+  it("creates a global OpenCode plugin when it does not exist", () => {
     writeOpenCodeHooks(tmpDir);
 
-    const written = JSON.parse(readFileSync(join(tmpDir, "config.json"), "utf8"));
-    expect(written).toHaveProperty("hooks.tool:before");
-    expect(written).toHaveProperty("hooks.tool:after");
+    const written = readFileSync(join(tmpDir, "plugins", "llm-memory.js"), "utf8");
+    expect(written).toContain("tool.execute.after");
+    expect(written).toContain("hook-receiver");
   });
 
-  it("merges without destroying existing keys", () => {
+  it("does not touch existing opencode.json settings", () => {
     const existing = { provider: "anthropic", model: "claude-3" };
-    writeFileSync(join(tmpDir, "config.json"), JSON.stringify(existing));
+    writeFileSync(join(tmpDir, "opencode.json"), JSON.stringify(existing));
 
     writeOpenCodeHooks(tmpDir);
 
-    const written = JSON.parse(readFileSync(join(tmpDir, "config.json"), "utf8"));
+    const written = JSON.parse(readFileSync(join(tmpDir, "opencode.json"), "utf8"));
     expect(written.provider).toBe("anthropic");
     expect(written.model).toBe("claude-3");
-    expect(written).toHaveProperty("hooks.tool:before");
+    expect(readFileSync(join(tmpDir, "plugins", "llm-memory.js"), "utf8")).toContain("LLMMemoryPlugin");
   });
 });
