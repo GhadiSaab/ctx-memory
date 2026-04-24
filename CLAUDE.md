@@ -59,6 +59,31 @@ npm run mcp          # node dist/mcp/index.js
 
 The DB path defaults to `~/.llm-memory/store.db` and can be overridden with `LLM_MEMORY_DB_PATH`.
 
+## Live E2E Testing
+
+The preferred way to validate changes is live real-time testing — run an actual tool session through the wrapper and inspect the DB. Do NOT just run unit tests; unit tests don't verify the pipeline actually works end-to-end.
+
+```bash
+# Test project (isolated, has git remote)
+cd /tmp/llm-memory-livetest
+
+# Claude — verify MCP tools are connected
+~/.llm-memory/bin/claude -p "List all MCP tools from the llm-memory server. If none, say MCP NOT CONNECTED."
+
+# Claude — verify context injection (prior sessions visible)
+~/.llm-memory/bin/claude -p "What do you know about this project from previous sessions? List everything from your memory context."
+
+# Codex — verify MCP tools are connected
+~/.llm-memory/bin/codex exec "List all MCP tools from the llm-memory server. If none, say MCP NOT CONNECTED."
+
+# Check DB after a session
+sqlite3 ~/.llm-memory/store.db "SELECT id, tool, outcome FROM sessions ORDER BY started_at DESC LIMIT 5;"
+sqlite3 ~/.llm-memory/store.db "SELECT content FROM messages_raw ORDER BY rowid DESC LIMIT 5;"
+sqlite3 ~/.llm-memory/store.db "SELECT substr(summary,1,100) FROM digests ORDER BY rowid DESC LIMIT 3;"
+```
+
+After every code change: build (`npm run build`), then run the relevant live test above before committing.
+
 ## Architecture
 
 This project is a persistent memory layer for LLM coding tools (Claude Code, Codex, Gemini, etc.) backed by SQLite and exposed via MCP. It processes session data through a three-layer pipeline before storing it.
