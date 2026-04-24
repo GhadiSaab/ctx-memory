@@ -3,8 +3,8 @@
 // Resolves the project, sets env vars, spawns MCP server + real tool,
 // and triggers session end on exit.
 
-import { spawn, execFileSync } from "node:child_process";
-import { accessSync, constants, writeFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
+import { spawn, execFileSync, execSync } from "node:child_process";
+import { accessSync, constants, writeFileSync, existsSync, readFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import { getSessionById, deleteSession, db, getProjectById, createSession } from
 import { classifyToolEvent } from "../layer1/events.js";
 import { readCodexSession } from "./codex.js";
 import { readClaudeSession } from "./claude.js";
+import { readAntigravitySession } from "./antigravity.js";
 import type { UUID } from "../types/index.js";
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
@@ -104,6 +105,17 @@ async function signalSessionEnd(
     }
   }
 
+  // For Antigravity: read session data from state.vscdb post-hoc
+  if ((tool as string) === "antigravity") {
+    try {
+      const { messages } = await readAntigravitySession(cwd, sessionStartMs);
+      if (messages.length > 0) {
+        const stampedMessages = messages.map(m => ({ ...m, session_id: sessionId as UUID }));
+        seedBuffers(sessionId, stampedMessages, []);
+      }
+    } catch { /* best-effort */ }
+  }
+
   // Minimum viable session guard: skip trivial sessions (no buffered data and very short)
   const session = getSessionById(sessionId as UUID);
   if (session) {
@@ -164,21 +176,105 @@ export function injectCodexContext(cwd: string, projectId: string): void {
   writeFileSync(agentsPath, injected, "utf8");
 }
 
-export function injectAntigravityContext(cwd: string, projectId: string): void {
+export function injectAntigravityContext(cwd: string, projectId: string, sessionId: string): void {
   const project = getProjectById(projectId as UUID);
-  if (!project?.memory_doc) return;
-
-  const rulesDir = join(cwd, ".agent", "rules");
-  const rulesPath = join(rulesDir, "llm-memory.md");
-  mkdirSync(rulesDir, { recursive: true });
 
   const content =
     "# llm-memory\n\n" +
+    "Use the `llm-memory` MCP server to persist important context for this chat.\n\n" +
+    "Session metadata:\n" +
+    `- session_id: ${sessionId}\n` +
+    `- project_id: ${projectId}\n\n` +
+    "During the conversation:\n" +
+    "- If you want to persist something mid-session, use `store_message` with the exact `session_id` from the header above.\n\n" +
+    "At session end:\n" +
+    "- Do not call `end_session` manually when the Antigravity process is exiting; the llm-memory wrapper will finalize the session automatically.\n\n" +
     "Project memory from previous sessions. Treat this as background context.\n\n" +
-    project.memory_doc.trim() +
+    (project?.memory_doc?.trim() ? project.memory_doc.trim() + "\n" : "") +
     "\n";
 
-  writeFileSync(rulesPath, content, "utf8");
+  // Primary: .windsurf/rules/llm-memory.md (what Antigravity actually reads)
+  const windsurfRulesDir = join(cwd, ".windsurf", "rules");
+  mkdirSync(windsurfRulesDir, { recursive: true });
+  writeFileSync(join(windsurfRulesDir, "llm-memory.md"), content, "utf8");
+
+  // Fallback: .agent/rules/llm-memory.md
+  const agentRulesDir = join(cwd, ".agent", "rules");
+  mkdirSync(agentRulesDir, { recursive: true });
+  writeFileSync(join(agentRulesDir, "llm-memory.md"), content, "utf8");
+}
+
+// ─── findAntigravityElectronPid ───────────────────────────────────────────────
+
+export function findAntigravityElectronPid(
+  cwd: string,
+  processList?: () => Array<{ pid: number; cmd: string }>
+): number | null {
+  try {
+    let procs: Array<{ pid: number; cmd: string }>;
+
+    if (processList) {
+      procs = processList();
+    } else if (process.platform === "linux") {
+      // Read /proc/*/cmdline to enumerate processes
+      procs = [];
+      let entries: string[];
+      try {
+        entries = readdirSync("/proc");
+      } catch {
+        return null;
+      }
+      for (const entry of entries) {
+        const pid = parseInt(entry, 10);
+        if (isNaN(pid)) continue;
+        try {
+          const cmdlineRaw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+          // cmdline uses null bytes as argument separators — replace with spaces
+          const cmd = cmdlineRaw.replace(/\0/g, " ").trim();
+          procs.push({ pid, cmd });
+        } catch {
+          // process may have exited or we lack permission — skip
+        }
+      }
+    } else {
+      // Other platforms: parse `ps aux`
+      const output = execSync("ps aux", { encoding: "utf8" });
+      procs = [];
+      for (const line of output.split("\n").slice(1)) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 11) continue;
+        const pid = parseInt(parts[1] ?? "", 10);
+        if (isNaN(pid)) continue;
+        const cmd = parts.slice(10).join(" ");
+        procs.push({ pid, cmd });
+      }
+    }
+
+    for (const { pid, cmd } of procs) {
+      // Match the main Electron process: binary path contains the antigravity install dir,
+      // and it's not a child process (child processes all have --type=).
+      const isAntigravityBin = cmd.includes("/share/antigravity/antigravity") ||
+        cmd.includes("/.antigravity/antigravity");
+      const isChildProcess = cmd.includes("--type=");
+      if (isAntigravityBin && !isChildProcess) return pid;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── isProcessAlive ───────────────────────────────────────────────────────────
+
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ESRCH") return false;
+    return true; // EPERM or other: process exists, we just can't signal it
+  }
 }
 
 // ─── Non-interactive subcommands (bypass wrapper entirely) ───────────────────
@@ -281,16 +377,34 @@ export async function main(): Promise<void> {
     try { injectCodexContext(cwd, projectId); } catch { /* best-effort */ }
   }
   if ((tool as string) === "antigravity") {
-    try { injectAntigravityContext(cwd, projectId); } catch { /* best-effort */ }
+    try { injectAntigravityContext(cwd, projectId, sessionId); } catch { /* best-effort */ }
   }
 
-  // Spawn MCP server as a side-car child process for tools that support MCP.
-  // Claude Code and OpenCode both support MCP. Codex and Gemini do not —
-  // StdioServerTransport would steal stdin from the child and corrupt the terminal.
+  // For Claude: write a temp MCP config and inject --mcp-config so Claude
+  // spawns and manages the MCP server itself (proper stdio pipe, not a dead sidecar).
+  // For OpenCode: same approach if it supports --mcp-config; skip for Codex/Gemini.
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const mcpScript = join(__dirname, "..", "mcp", "index.js");
-  const supportsMcp = (tool as string) === "claude" || (tool as string) === "opencode";
-  const mcpProc = supportsMcp
+  let mcpConfigPath: string | null = null;
+  let finalToolArgs = toolArgs;
+
+  if ((tool as string) === "claude") {
+    mcpConfigPath = join(homedir(), ".llm-memory", `session-${sessionId}.mcp.json`);
+    const mcpConfig = {
+      mcpServers: {
+        "llm-memory": {
+          command: process.execPath,
+          args: [mcpScript],
+        },
+      },
+    };
+    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig), "utf8");
+    finalToolArgs = ["--mcp-config", mcpConfigPath, ...toolArgs];
+  }
+
+  // OpenCode: spawn MCP sidecar the old way (OpenCode's --mcp-config support is unverified)
+  const supportsOldSidecar = (tool as string) === "opencode";
+  const mcpProc = supportsOldSidecar
     ? spawn(process.execPath, [mcpScript], {
         stdio: ["ignore", "ignore", "inherit"],
         env: { ...process.env },
@@ -300,7 +414,7 @@ export async function main(): Promise<void> {
   // Find and spawn the real tool binary
   const pathDirs = (process.env["PATH"] ?? "").split(":");
   const realBin = findRealBinary(tool, pathDirs);
-  const toolProc = spawn(realBin, toolArgs, {
+  const toolProc = spawn(realBin, finalToolArgs, {
     stdio: "inherit",
     env: { ...process.env },
   });
@@ -312,19 +426,72 @@ export async function main(): Promise<void> {
 
   toolProc.on("exit", async (code, signal) => {
     const outcome = resolveOutcome(code, signal);
-    try {
-      await signalSessionEnd(sessionId, projectId, outcome, code, tool as string, cwd, sessionStartMs);
-    } catch (e) {
-      console.error("[llm-memory] session end failed:", e);
+
+    // Clean up temp MCP config file written for Claude
+    if (mcpConfigPath) {
+      try { rmSync(mcpConfigPath); } catch { /* best-effort */ }
     }
-    mcpProc?.kill();
-    process.exit(code ?? 0);
+
+    if ((tool as string) !== "antigravity") {
+      // existing behavior for all other tools
+      try {
+        await signalSessionEnd(sessionId, projectId, outcome, code, tool as string, cwd, sessionStartMs);
+      } catch (e) {
+        console.error("[llm-memory] session end failed:", e);
+      }
+      mcpProc?.kill();
+      process.exit(code ?? 0);
+      return;
+    }
+
+    // Antigravity: CLI exits fast (~immediately), poll the Electron GUI process
+    const pid = findAntigravityElectronPid(cwd);
+    if (pid === null) {
+      try {
+        await signalSessionEnd(sessionId, projectId, outcome, code, tool as string, cwd, sessionStartMs);
+      } catch (e) {
+        console.error("[llm-memory] session end failed:", e);
+      }
+      mcpProc?.kill();
+      process.exit(0);
+      return;
+    }
+
+    const MAX_WAIT_MS = 8 * 60 * 60 * 1000; // 8 hours
+    const POLL_INTERVAL_MS = 2000;
+    const deadline = Date.now() + MAX_WAIT_MS;
+    const poll = setInterval(async () => {
+      const stillAlive = isProcessAlive(pid);
+      const timedOut = Date.now() >= deadline;
+      if (!stillAlive || timedOut) {
+        clearInterval(poll);
+        try {
+          await signalSessionEnd(sessionId, projectId, "completed", 0, tool as string, cwd, sessionStartMs);
+        } catch (e) {
+          console.error("[llm-memory] session end failed:", e);
+        }
+        mcpProc?.kill();
+        process.exit(0);
+      }
+    }, POLL_INTERVAL_MS);
   });
 }
 
 // ─── Entrypoint ───────────────────────────────────────────────────────────────
 
-if (!process.env["VITEST"]) {
+// Only run when invoked as a wrapper binary (symlink pointing to this file),
+// not when imported as a module by the CLI or tests.
+// The symlink path (e.g. ~/.llm-memory/bin/claude) never ends with wrapper/index.js,
+// but the real tool wrappers always resolve through detectTool() which reads argv[1].
+// Safe check: skip main() when argv[1] ends with cli/index.js (npm global bin resolves
+// to the real path, but the symlink path at ~/.llm-memory/bin/* does not).
+// Simplest reliable check: only run main() when VITEST is unset AND argv[1] does NOT
+// resolve to the cli entrypoint.
+import { realpathSync as _realpathSync } from "node:fs";
+const _realArgv1 = (() => { try { return _realpathSync(process.argv[1] ?? ""); } catch { return process.argv[1] ?? ""; } })();
+const _isWrapperEntry = !_realArgv1.endsWith("/cli/index.js") && !_realArgv1.endsWith("/cli/index.ts");
+
+if (!process.env["VITEST"] && _isWrapperEntry) {
   main().catch((e) => {
     console.error("[llm-memory] wrapper fatal error:", e);
     process.exit(1);

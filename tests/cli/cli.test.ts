@@ -10,6 +10,8 @@ import {
   injectPathLine,
   forgetProject,
   getAllProjects,
+  buildAntigravityMcpServer,
+  writeLegacyAntigravityMcpConfig,
 } from "../../src/cli/index.js";
 
 // ─── detectInstalledTools ─────────────────────────────────────────────────────
@@ -86,6 +88,84 @@ describe("createWrapperSymlink", () => {
 
     const linkPath = path.join(tmpDir, "claude");
     expect(fs.readlinkSync(linkPath)).toBe(wrapperPath);
+  });
+});
+
+describe("Antigravity MCP registration helpers", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "antigravity-mcp-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("builds an llm-memory MCP server definition for Antigravity", () => {
+    const receiverPath = "/tmp/llm-memory/dist/src/hooks/receiver.js";
+    const server = buildAntigravityMcpServer(receiverPath);
+
+    expect(server.name).toBe("llm-memory");
+    expect(server.command).toBe(process.execPath);
+    expect(server.args).toEqual(["/tmp/llm-memory/dist/src/mcp/index.js"]);
+    expect(typeof server.env.LLM_MEMORY_DB_PATH).toBe("string");
+    expect(server.env.LLM_MEMORY_DB_PATH.length).toBeGreaterThan(0);
+  });
+
+  it("writes the legacy Antigravity MCP config in the expected shape", () => {
+    writeLegacyAntigravityMcpConfig(tmpDir, {
+      name: "llm-memory",
+      command: "/usr/bin/node",
+      args: ["/tmp/llm-memory/dist/src/mcp/index.js"],
+      env: { LLM_MEMORY_DB_PATH: "/tmp/store.db" },
+    });
+
+    const written = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "mcp_config.json"), "utf8")
+    );
+
+    expect(written).toEqual({
+      mcpServers: {
+        "llm-memory": {
+          command: "/usr/bin/node",
+          args: ["/tmp/llm-memory/dist/src/mcp/index.js"],
+          env: { LLM_MEMORY_DB_PATH: "/tmp/store.db" },
+        },
+      },
+    });
+  });
+
+  it("merges the legacy Antigravity MCP config without destroying existing servers", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "mcp_config.json"),
+      JSON.stringify({
+        mcpServers: {
+          existing: { command: "python", args: ["server.py"] },
+        },
+      })
+    );
+
+    writeLegacyAntigravityMcpConfig(tmpDir, {
+      name: "llm-memory",
+      command: "/usr/bin/node",
+      args: ["/tmp/llm-memory/dist/src/mcp/index.js"],
+      env: { LLM_MEMORY_DB_PATH: "/tmp/store.db" },
+    });
+
+    const written = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "mcp_config.json"), "utf8")
+    );
+
+    expect(written.mcpServers.existing).toEqual({
+      command: "python",
+      args: ["server.py"],
+    });
+    expect(written.mcpServers["llm-memory"]).toEqual({
+      command: "/usr/bin/node",
+      args: ["/tmp/llm-memory/dist/src/mcp/index.js"],
+      env: { LLM_MEMORY_DB_PATH: "/tmp/store.db" },
+    });
   });
 });
 

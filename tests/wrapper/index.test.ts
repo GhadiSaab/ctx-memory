@@ -134,7 +134,7 @@ describe("injectAntigravityContext", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  it("writes project memory into .agent/rules/llm-memory.md", () => {
+  it("writes project memory into .windsurf/rules/llm-memory.md and .agent/rules/llm-memory.md", () => {
     const project = createProject({
       name: "proj",
       path: cwd,
@@ -143,10 +143,19 @@ describe("injectAntigravityContext", () => {
     });
     upsertMemoryDoc(project.id, "# Project Memory\n\n## Architecture\n- Uses SQLite");
 
-    injectAntigravityContext(cwd, project.id);
+    injectAntigravityContext(cwd, project.id, "session-123");
 
-    const content = readFileSync(join(cwd, ".agent", "rules", "llm-memory.md"), "utf8");
+    // Primary: .windsurf/rules/llm-memory.md
+    const content = readFileSync(join(cwd, ".windsurf", "rules", "llm-memory.md"), "utf8");
     expect(content).toContain("# llm-memory");
+    expect(content).toContain("session_id: session-123");
+    expect(content).toContain(`project_id: ${project.id}`);
+    expect(content).toContain("store_message");
+    expect(content).toContain("wrapper will finalize the session automatically");
     expect(content).toContain("Uses SQLite");
+
+    // Fallback: .agent/rules/llm-memory.md should also exist with the same content
+    const agentContent = readFileSync(join(cwd, ".agent", "rules", "llm-memory.md"), "utf8");
+    expect(agentContent).toBe(content);
   });
 });

@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { db, getConfigValue, setConfigValue } from "../db/index.js";
 import { writeClaudeHooks, writeGeminiHooks, writeOpenCodeHooks } from "../hooks/index.js";
 import type { UUID, ToolName } from "../types/index.js";
@@ -160,12 +160,29 @@ function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
 
 // ─── registerAntigravityMcp ──────────────────────────────────────────────────
 
-/**
- * Registers the llm-memory MCP server for Antigravity by merging into
- * ~/.gemini/antigravity/mcp_config.json.
- */
-function registerAntigravityMcp(receiverPath: string, antigravityDir: string): void {
+export interface AntigravityMcpServerDefinition {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export function buildAntigravityMcpServer(receiverPath: string): AntigravityMcpServerDefinition {
   const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
+  const dbPath = process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".llm-memory", "store.db");
+
+  return {
+    name: "llm-memory",
+    command: process.execPath,
+    args: [mcpScript],
+    env: { LLM_MEMORY_DB_PATH: dbPath },
+  };
+}
+
+export function writeLegacyAntigravityMcpConfig(
+  antigravityDir: string,
+  server: AntigravityMcpServerDefinition
+): void {
   const configPath = path.join(antigravityDir, "mcp_config.json");
 
   let existing: Record<string, unknown> = {};
@@ -181,16 +198,33 @@ function registerAntigravityMcp(receiverPath: string, antigravityDir: string): v
     ...existing,
     mcpServers: {
       ...existingServers,
-      "llm-memory": {
-        command: process.execPath,
-        args: [mcpScript],
-        env: { LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? "" },
+      [server.name]: {
+        command: server.command,
+        args: server.args,
+        env: server.env,
       },
     },
   };
 
   fs.mkdirSync(antigravityDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Registers the llm-memory MCP server for Antigravity using Antigravity's
+ * built-in CLI command, then mirrors the entry into the legacy
+ * ~/.gemini/antigravity/mcp_config.json path for compatibility.
+ */
+export function registerAntigravityMcp(receiverPath: string, antigravityDir: string): void {
+  const server = buildAntigravityMcpServer(receiverPath);
+
+  try {
+    execFileSync("antigravity", ["--add-mcp", JSON.stringify(server)], { stdio: "pipe" });
+  } catch {
+    // Fall back to the legacy file-based config path if CLI registration fails.
+  }
+
+  writeLegacyAntigravityMcpConfig(antigravityDir, server);
 }
 
 // ─── forgetProject ────────────────────────────────────────────────────────────
@@ -316,6 +350,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "antigravity") {
+    const sub = args[1];
+    if (sub === "start") {
+      await runAntigravityStart(args[2]);
+    } else {
+      console.error(`Unknown antigravity subcommand: ${sub ?? "(none)"}`);
+      console.error('Usage: llm-memory antigravity start [path]');
+      process.exit(1);
+    }
+    return;
+  }
+
   console.error(`Unknown command: ${cmd}`);
   printHelp();
   process.exit(1);
@@ -331,6 +377,7 @@ Commands:
   projects show <name>           Show project memory doc
   projects forget <name>         Reset project memory (soft)
   projects forget <name> --hard  Delete all sessions + data for project
+  antigravity start [path]       Start tracking an Antigravity GUI session
 `);
 }
 
@@ -538,6 +585,104 @@ function runProjectsForget(name: string | undefined, hard: boolean): void {
   } else {
     console.log(`✓ Forgot project: ${name} (memory reset, sessions preserved)`);
   }
+}
+
+// ─── antigravity start ────────────────────────────────────────────────────────
+
+async function runAntigravityStart(dirArg?: string): Promise<void> {
+  const { resolveProject } = await import("../wrapper/project.js");
+  const { injectAntigravityContext, findAntigravityElectronPid, isProcessAlive } = await import("../wrapper/index.js");
+  const { createSession, getSessionById, deleteSession, db: dbInstance } = await import("../db/index.js");
+  const { handleEndSession, seedBuffers, getMessageBuffer, getEventBuffer } = await import("../mcp/handlers.js");
+  const { loadEmbedder } = await import("../db/embedding.js");
+  const { readAntigravitySession } = await import("../wrapper/antigravity.js");
+  const { v4: uuid } = await import("uuid");
+
+  const cwd = dirArg ? path.resolve(dirArg) : process.cwd();
+  const { projectId } = await resolveProject(cwd);
+  const sessionId = uuid() as UUID;
+  const sessionStartMs = Date.now();
+
+  // Create session + inject context
+  createSession({ id: sessionId, project_id: projectId as UUID, tool: "antigravity" });
+  try { injectAntigravityContext(cwd, projectId, sessionId); } catch { /* best-effort */ }
+
+  // Find the Electron PID
+  let pid = findAntigravityElectronPid(cwd);
+
+  if (pid === null) {
+    console.log(`[llm-memory] Antigravity session started (${sessionId.slice(0, 8)})`);
+    console.log(`[llm-memory] Waiting for Antigravity to launch... (up to 60s)`);
+    // Wait up to 60s for Antigravity to appear
+    const waitDeadline = Date.now() + 60_000;
+    await new Promise<void>((resolve) => {
+      const wait = setInterval(() => {
+        pid = findAntigravityElectronPid(cwd);
+        if (pid !== null || Date.now() >= waitDeadline) {
+          clearInterval(wait);
+          resolve();
+        }
+      }, 2000);
+    });
+  }
+
+  if (pid === null) {
+    console.log(`[llm-memory] Antigravity not detected. Session will end on process exit or after 8h.`);
+  } else {
+    console.log(`[llm-memory] Antigravity session started (${sessionId.slice(0, 8)}) — tracking PID ${pid}`);
+  }
+
+  // Poll until Electron exits or 8h timeout
+  const MAX_WAIT_MS = 8 * 60 * 60 * 1000;
+  const POLL_INTERVAL_MS = 2000;
+  const deadline = Date.now() + MAX_WAIT_MS;
+
+  await new Promise<void>((resolve) => {
+    if (pid === null) { resolve(); return; }
+    const poll = setInterval(() => {
+      const stillAlive = isProcessAlive(pid!);
+      const timedOut = Date.now() >= deadline;
+      if (!stillAlive || timedOut) {
+        clearInterval(poll);
+        resolve();
+      }
+    }, POLL_INTERVAL_MS);
+  });
+
+  // Session end pipeline
+  console.log(`[llm-memory] Antigravity closed — finalizing session...`);
+  try {
+    const { messages } = await readAntigravitySession(cwd, sessionStartMs);
+    if (messages.length > 0) {
+      const stampedMessages = messages.map(m => ({ ...m, session_id: sessionId }));
+      seedBuffers(sessionId, stampedMessages, []);
+    }
+  } catch { /* best-effort */ }
+
+  // Minimum viable session guard
+  const session = getSessionById(sessionId);
+  if (session) {
+    const durationSeconds = Math.round((Date.now() - session.started_at) / 1000);
+    const eventCount = (dbInstance.prepare<[string], { count: number }>(
+      "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
+    ).get(sessionId) ?? { count: 0 }).count;
+    const hasBufferedData = getMessageBuffer(sessionId).length > 0 || getEventBuffer(sessionId).length > 0;
+    if (!hasBufferedData && eventCount === 0 && durationSeconds < 30) {
+      try { deleteSession(sessionId); } catch { /* best-effort */ }
+      console.log(`[llm-memory] Session too short — discarded.`);
+      return;
+    }
+  }
+
+  try { await loadEmbedder(); } catch { /* best-effort */ }
+  await handleEndSession({
+    session_id: sessionId,
+    project_id: projectId,
+    tool: "antigravity",
+    outcome: "completed",
+    exit_code: 0,
+  });
+  console.log(`[llm-memory] Session saved.`);
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────────

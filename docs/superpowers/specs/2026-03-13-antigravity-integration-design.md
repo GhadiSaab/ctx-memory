@@ -72,10 +72,10 @@ The reader maps each `requests` entry to two `Message` objects: `{ role: "user",
 
 ### 2. Modified: `src/wrapper/index.ts`
 
-**a) `injectAntigravityContext` — fix rules path:**
+**a) `injectAntigravityContext` — fix rules path and MCP instructions:**
 - Write to `.windsurf/rules/llm-memory.md` (primary — what Antigravity actually reads)
 - Also write to `.agent/rules/llm-memory.md` (fallback)
-- Rules file content unchanged: project memory + MCP instructions (session_id, project_id, how to call `record_turn`)
+- **Rules file content must change:** remove `record_turn` instruction. `record_turn` auto-creates its own session ID, producing a duplicate disconnected session alongside the wrapper's session. Instead, instruct Cascade to use `store_message` with the exact `session_id` from the rules header if it wants to persist anything mid-session. The post-hoc `state.vscdb` reader is the primary capture path; `store_message` (not `record_turn`) is the supplementary MCP path. Remove the `record_turn` mention from the test expectation accordingly.
 
 **b) `findAntigravityElectronPid(cwd, processList?)` — new function:**
 - Accepts an optional `processList` provider `() => Array<{ pid: number; cmd: string }>` for testability (defaults to reading `/proc/*/cmdline` on Linux, `ps aux` output on other platforms)
@@ -84,14 +84,26 @@ The reader maps each `requests` entry to two `Message` objects: `{ role: "user",
 
 **c) Session lifetime tracking — replace CLI exit trigger:**
 
+The current `toolProc.on("exit")` handler calls `signalSessionEnd`, kills `mcpProc`, and calls `process.exit(code ?? 0)`. For Antigravity the CLI exits fast, so the handler must **not** call `process.exit()` immediately — instead it must keep the wrapper process alive while polling the Electron GUI PID. `setInterval` keeps the Node.js event loop alive automatically; there is no need for a keepalive reference.
+
 ```
-// After CLI child exits quickly:
-const pid = findAntigravityElectronPid(cwd);
-if (pid === null) {
-  // GUI not running — fire session end immediately
-  await signalSessionEnd(...);
-} else {
-  // Poll until Electron exits or timeout
+toolProc.on("exit", async (code) => {
+  if (tool !== "antigravity") {
+    // existing behavior for all other tools
+    await signalSessionEnd(...);
+    mcpProc?.kill();
+    process.exit(code ?? 0);
+    return;
+  }
+
+  // Antigravity: CLI exits fast, poll the Electron GUI process
+  const pid = findAntigravityElectronPid(cwd);
+  if (pid === null) {
+    await signalSessionEnd(...);
+    process.exit(0);
+    return;
+  }
+
   const MAX_WAIT_MS = 8 * 60 * 60 * 1000; // 8 hours
   const POLL_INTERVAL_MS = 2000;
   const deadline = Date.now() + MAX_WAIT_MS;
@@ -101,19 +113,40 @@ if (pid === null) {
     if (!stillAlive || timedOut) {
       clearInterval(poll);
       await signalSessionEnd(...);
+      process.exit(0);
     }
   }, POLL_INTERVAL_MS);
-}
+});
 ```
+
+**Wrapper process visibility:** while polling, the wrapper Node.js process remains alive in `ps` output. This is intentional — it is the session tracker. Users who notice it can ignore it; it exits automatically when the Antigravity window closes or after 8 hours.
 
 `isProcessAlive(pid)`: sends signal 0 (`process.kill(pid, 0)`) — returns `true` if process exists, `false` if ESRCH.
 
-The 8-hour timeout handles the case where a user keeps the window open all day. On timeout, the pipeline runs with whatever MCP-captured data exists so far.
+The 8-hour timeout handles the case where a user keeps the window open all day. On timeout, the pipeline runs with whatever data exists.
 
 **d) MCP sidecar: NOT spawned for Antigravity**
 `supportsMcp` stays `tool === "claude" || tool === "opencode"`. Antigravity's MCP calls go to a separately-running `llm-memory` MCP server (configured via `mcp.json`), not the wrapper's in-process sidecar. This means live MCP capture goes directly to DB (via the standalone MCP server process) and does **not** use in-memory buffers. Consequence: `messageBuffers`/`eventBuffers` will always be empty for Antigravity — the `state.vscdb` post-hoc reader is the real data source. MCP calls from Cascade still persist to DB correctly via the standalone server.
 
-### 3. No changes needed elsewhere
+### 3. `signalSessionEnd` — Antigravity branch in `src/wrapper/index.ts`
+
+`signalSessionEnd` already has `if (tool === "codex")` and `if (tool === "claude")` branches that call their respective readers and seed buffers. The new Antigravity branch:
+
+```typescript
+if (tool === "antigravity") {
+  try {
+    const { messages } = await readAntigravitySession(cwd, sessionStartMs);
+    if (messages.length > 0) {
+      // Seed messages into the session buffer (events stay empty — no post-hoc events)
+      seedBuffers(sessionId, messages, []);
+    }
+  } catch { /* best-effort */ }
+}
+```
+
+No `classifyToolEvent` call needed (unlike Codex/Claude which may also seed events). The rest of `signalSessionEnd` — `loadEmbedder()` and `handleEndSession()` — runs unchanged after this branch.
+
+### 4. No changes needed elsewhere
 
 - MCP handlers, DB schema, Layer 1/2/3 pipeline, CLI setup wizard — all unchanged
 - `mcp.json` registration already correct
@@ -140,7 +173,8 @@ antigravity chat "prompt"
         │
    [meanwhile: Cascade reads .windsurf/rules/llm-memory.md]
         ├─ calls get_project_memory MCP tool at session start (via standalone MCP server → DB)
-        └─ calls record_turn / store_message during session (→ DB directly, not via buffers)
+        └─ may call store_message with exact session_id mid-session (→ DB directly, not via buffers)
+        │   (record_turn is NOT used — it creates a duplicate disconnected session)
         │
    [Electron GUI exits OR 8h timeout]
         │
@@ -193,8 +227,9 @@ All reader and injection logic is best-effort — never throws, never blocks the
 
 ### Updated: `tests/wrapper/index.test.ts`
 
-- **Update** existing `injectAntigravityContext` test: change assertion from `.agent/rules/llm-memory.md` to `.windsurf/rules/llm-memory.md`
+- **Update** existing `injectAntigravityContext` test: change path assertion from `.agent/rules/llm-memory.md` to `.windsurf/rules/llm-memory.md`
 - **Add** assertion that `.agent/rules/llm-memory.md` is also written (fallback)
+- **Update** content assertion: replace `expect(content).toContain("record_turn")` with `expect(content).toContain("store_message")` — `record_turn` is no longer instructed in the rules file
 
 ### No new integration test
 
@@ -207,9 +242,9 @@ The existing session pipeline integration test covers Layer1→2→3. The Antigr
 | File | Change |
 |---|---|
 | `src/wrapper/antigravity.ts` | **New** — `findWorkspaceHash`, `readAntigravitySession` |
-| `src/wrapper/index.ts` | Fix `injectAntigravityContext` paths; add `findAntigravityElectronPid`, `isProcessAlive`; fix session lifetime tracking (poll Electron PID, 8h timeout) |
+| `src/wrapper/index.ts` | Fix `injectAntigravityContext` paths + rules content (remove `record_turn`); add `findAntigravityElectronPid`, `isProcessAlive`; replace CLI exit trigger with Electron PID polling loop; add Antigravity branch in `signalSessionEnd` |
 | `tests/wrapper/antigravity.test.ts` | **New** — unit tests for reader and PID-finder |
-| `tests/wrapper/index.test.ts` | Update existing `injectAntigravityContext` test + add fallback path assertion |
+| `tests/wrapper/index.test.ts` | Update existing `injectAntigravityContext` test (path + content assertions) + add fallback path assertion |
 
 ---
 

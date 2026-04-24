@@ -9,6 +9,7 @@ import {
   handleGetProjectMemory,
   handleListSessions,
   handleEndSession,
+  handleRecordTurn,
   getMessageBuffer,
   getEventBuffer,
   clearBuffers,
@@ -151,6 +152,51 @@ describe("handleGetProjectMemory", () => {
   it("returns an error for an unknown project_id", async () => {
     const result = await handleGetProjectMemory({ project_id: "non-existent-id" });
     expect(result).toHaveProperty("error");
+  });
+});
+
+describe("handleRecordTurn", () => {
+  it("creates a project on demand from a workspace path and writes project memory", async () => {
+    const result = r(await handleRecordTurn({
+      project_id: "/tmp/testantigravity",
+      messages: [
+        { role: "user", content: "Remember this project is only for testing Antigravity memory." },
+        { role: "assistant", content: "I will retain that as the purpose of the repository." },
+      ],
+      tool: "antigravity",
+      outcome: "completed",
+    }));
+
+    expect(result.ok).toBe(true);
+
+    const project = getProjectById(result.project_id);
+    expect(project).not.toBeNull();
+    expect(project!.path).toBe("/tmp/testantigravity");
+    expect(project!.memory_doc).toContain("# Project Memory");
+  });
+
+  it("records file-edit events passed through the turn payload", async () => {
+    const result = r(await handleRecordTurn({
+      project_id: "/tmp/testantigravity-events",
+      messages: [
+        { role: "user", content: "Update train_monitor.py." },
+        { role: "assistant", content: "I updated train_monitor.py." },
+      ],
+      events: [
+        {
+          tool: "write_file",
+          args: { path: "train_monitor.py" },
+          result: { success: true },
+          success: true,
+        },
+      ],
+      tool: "antigravity",
+      outcome: "completed",
+    }));
+
+    const digest = getDigestBySession(result.session_id);
+    expect(digest).not.toBeNull();
+    expect(digest!.files_modified).toContain("train_monitor.py");
   });
 });
 
