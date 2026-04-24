@@ -284,7 +284,7 @@ export function isProcessAlive(pid: number): boolean {
 const BYPASS_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
   claude:    new Set(["mcp", "doctor", "update", "login", "logout", "config", "completion", "migrate"]),
   codex:     new Set(["login", "logout", "mcp", "mcp-server", "completion", "debug", "apply", "resume",
-                      "fork", "cloud", "features", "exec", "review", "sandbox", "app-server"]),
+                      "fork", "cloud", "features", "review", "sandbox", "app-server"]),
   opencode:  new Set(["update", "upgrade", "uninstall", "auth", "mcp", "completion", "debug", "acp",
                       "serve", "web", "models", "stats", "export", "import", "github", "pr",
                       "session", "db", "agent"]),

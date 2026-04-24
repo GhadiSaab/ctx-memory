@@ -83,11 +83,11 @@ const StoreEventSchema = z.object({
 });
 
 const GetProjectMemorySchema = z.object({
-  project_id: z.string().min(1),
+  project_id: z.string().min(1).optional(),
 });
 
 const ListSessionsSchema = z.object({
-  project_id: z.string().min(1),
+  project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().default(20),
 });
 
@@ -101,7 +101,7 @@ const EndSessionSchema = z.object({
 
 const SearchContextSchema = z.object({
   query: z.string().min(1),
-  project_id: z.string().min(1),
+  project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().default(5),
 });
 
@@ -211,10 +211,11 @@ export async function handleGetProjectMemory(input: unknown) {
   const parsed = GetProjectMemorySchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const { project_id } = parsed.data;
+  // Resolve project_id: use arg, fall back to env var set by wrapper
+  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+  if (!project_id) return err("project_id required", "INVALID_INPUT");
 
-  // Try UUID lookup first, then fall back to path-hash lookup.
-  // Claude Code passes the raw working directory path as project_id.
+  // Try UUID lookup first, then path-hash lookup (Claude Code passes cwd as project_id)
   let project = getProjectById(project_id as UUID);
   if (!project) {
     const pathHash = createHash("sha256").update(project_id).digest("hex");
@@ -231,7 +232,9 @@ export async function handleListSessions(input: unknown) {
   const parsed = ListSessionsSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const { project_id, limit } = parsed.data;
+  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+  if (!project_id) return err("project_id required", "INVALID_INPUT");
+  const { limit } = parsed.data;
   const sessions = getRecentSessionsByProject(project_id as UUID, limit);
 
   return {
@@ -251,7 +254,9 @@ export async function handleSearchContext(input: unknown) {
   const parsed = SearchContextSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const { query, project_id, limit } = parsed.data;
+  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+  if (!project_id) return err("project_id required", "INVALID_INPUT");
+  const { query, limit } = parsed.data;
 
   try {
     // Try embedding search first
