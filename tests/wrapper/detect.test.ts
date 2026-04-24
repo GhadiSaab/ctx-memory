@@ -27,11 +27,6 @@ describe("detectTool", () => {
     expect(detectTool()).toBe("opencode");
   });
 
-  it("returns 'antigravity' when argv[1] basename is 'antigravity'", () => {
-    process.argv = ["node", "/usr/local/bin/antigravity"];
-    expect(detectTool()).toBe("antigravity");
-  });
-
   it("throws for an unknown binary name", () => {
     process.argv = ["node", "/usr/local/bin/cursor"];
     expect(() => detectTool()).toThrow();

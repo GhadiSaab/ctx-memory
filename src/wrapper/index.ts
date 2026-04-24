@@ -3,8 +3,8 @@
 // Resolves the project, sets env vars, spawns MCP server + real tool,
 // and triggers session end on exit.
 
-import { spawn, execFileSync, execSync } from "node:child_process";
-import { accessSync, constants, writeFileSync, existsSync, readFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { spawn, execFileSync } from "node:child_process";
+import { accessSync, constants, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -19,7 +19,6 @@ import { getSessionById, deleteSession, db, getProjectById, createSession } from
 import { classifyToolEvent } from "../layer1/events.js";
 import { readCodexSession } from "./codex.js";
 import { readClaudeSession } from "./claude.js";
-import { readAntigravitySession } from "./antigravity.js";
 import { readOpenCodeSession } from "./opencode.js";
 import { readGeminiSession } from "./gemini.js";
 import type { UUID } from "../types/index.js";
@@ -56,7 +55,7 @@ export function findRealBinary(toolName: string, pathDirs: string[]): string {
 }
 
 export function normalizeToolName(tool: string): ToolName {
-  if (tool === "claude") return "claude-code";
+  if ((tool as string) === "claude") return "claude-code";
   return tool as ToolName;
 }
 
@@ -72,10 +71,9 @@ async function signalSessionEnd(
   sessionStartMs: number
 ): Promise<void> {
   // For Codex: read session data from its own storage (no MCP/hooks)
-  if ((tool as string) === "codex") {
+  if (tool === "codex") {
     const codexData = readCodexSession(cwd, sessionStartMs);
     if (codexData) {
-      // Restamp messages with the wrapper's sessionId — Codex embeds its own thread UUID
       const stampedMessages = codexData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
       const extractedEvents = codexData.events
         .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
@@ -94,8 +92,6 @@ async function signalSessionEnd(
         "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
       ).get(sessionId) ?? { count: 0 }).count;
 
-      // Always use messages from JSONL (MCP store_message is rarely configured)
-      // Only use events from JSONL if hooks captured nothing
       const eventsToSeed = eventCount === 0
         ? claudeData.events
             .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
@@ -107,10 +103,8 @@ async function signalSessionEnd(
     }
   }
 
-  // For OpenCode: read its local SQLite store post-hoc. This captures prompts,
-  // assistant messages, and tool events even when plugin hooks do not inherit
-  // the wrapper's session environment.
-  if ((tool as string) === "opencode") {
+  // For OpenCode: read its local SQLite store post-hoc.
+  if (tool === "opencode") {
     const openCodeData = readOpenCodeSession(cwd, sessionStartMs);
     if (openCodeData) {
       const eventCount = (db.prepare<[string], { count: number }>(
@@ -131,7 +125,7 @@ async function signalSessionEnd(
 
   // For Gemini: read session JSONL post-hoc. Hooks may not fire in non-interactive
   // mode, so the post-session reader is the reliable data source.
-  if ((tool as string) === "gemini") {
+  if (tool === "gemini") {
     const geminiData = readGeminiSession(cwd, sessionStartMs);
     if (geminiData) {
       const eventCount = (db.prepare<[string], { count: number }>(
@@ -150,17 +144,6 @@ async function signalSessionEnd(
     }
   }
 
-  // For Antigravity: read session data from state.vscdb post-hoc
-  if ((tool as string) === "antigravity") {
-    try {
-      const { messages } = await readAntigravitySession(cwd, sessionStartMs);
-      if (messages.length > 0) {
-        const stampedMessages = messages.map(m => ({ ...m, session_id: sessionId as UUID }));
-        seedBuffers(sessionId, stampedMessages, []);
-      }
-    } catch { /* best-effort */ }
-  }
-
   // Minimum viable session guard: skip trivial sessions (no buffered data and very short)
   const session = getSessionById(sessionId as UUID);
   if (session) {
@@ -175,8 +158,6 @@ async function signalSessionEnd(
     }
   }
 
-  // MCP sidecar loads the embedder for Claude, but since we now run the pipeline
-  // directly in the wrapper for all tools, always ensure embedder is loaded.
   try { await loadEmbedder(); } catch { /* best-effort */ }
 
   await handleEndSession({
@@ -188,21 +169,17 @@ async function signalSessionEnd(
   });
 }
 
-// ─── injectCodexContext ───────────────────────────────────────────────────────
+// ─── Context injection ────────────────────────────────────────────────────────
 
 const AGENTS_MD_HEADER = "<!-- llm-memory: auto-generated, do not edit -->\n";
 
-export function injectCodexContext(cwd: string, projectId: string): void {
+function injectMarkdownContext(filePath: string, projectId: string): void {
   const project = getProjectById(projectId as UUID);
   if (!project?.memory_doc) return;
 
-  const agentsPath = join(cwd, "AGENTS.md");
-
-  // If AGENTS.md exists and wasn't written by us, prepend our section
   let existing = "";
-  if (existsSync(agentsPath)) {
-    const content = readFileSync(agentsPath, "utf8");
-    // Already injected — replace our section
+  if (existsSync(filePath)) {
+    const content = readFileSync(filePath, "utf8");
     if (content.startsWith(AGENTS_MD_HEADER)) {
       const markerEnd = content.indexOf("\n<!-- /llm-memory -->");
       existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /llm-memory -->".length) : "";
@@ -218,196 +195,31 @@ export function injectCodexContext(cwd: string, projectId: string): void {
     "\n<!-- /llm-memory -->" +
     existing;
 
-  writeFileSync(agentsPath, injected, "utf8");
+  writeFileSync(filePath, injected, "utf8");
+}
+
+export function injectCodexContext(cwd: string, projectId: string): void {
+  injectMarkdownContext(join(cwd, "AGENTS.md"), projectId);
 }
 
 export function injectGeminiContext(cwd: string, projectId: string): void {
-  const project = getProjectById(projectId as UUID);
-  if (!project?.memory_doc) return;
-
-  const geminiMdPath = join(cwd, "GEMINI.md");
-
-  let existing = "";
-  if (existsSync(geminiMdPath)) {
-    const content = readFileSync(geminiMdPath, "utf8");
-    if (content.startsWith(AGENTS_MD_HEADER)) {
-      const markerEnd = content.indexOf("\n<!-- /llm-memory -->");
-      existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /llm-memory -->".length) : "";
-    } else {
-      existing = "\n" + content;
-    }
-  }
-
-  const injected =
-    AGENTS_MD_HEADER +
-    "# Project Memory (from previous sessions)\n\n" +
-    project.memory_doc.trim() +
-    "\n<!-- /llm-memory -->" +
-    existing;
-
-  writeFileSync(geminiMdPath, injected, "utf8");
-}
-
-export function injectAntigravityContext(cwd: string, projectId: string, sessionId: string): void {
-  const project = getProjectById(projectId as UUID);
-
-  const content =
-    "# llm-memory\n\n" +
-    "Use the `llm-memory` MCP server to persist important context for this chat.\n\n" +
-    "Session metadata:\n" +
-    `- session_id: ${sessionId}\n` +
-    `- project_id: ${projectId}\n\n` +
-    "During the conversation:\n" +
-    "- If you want to persist something mid-session, use `store_message` with the exact `session_id` from the header above.\n\n" +
-    "At session end:\n" +
-    "- Do not call `end_session` manually when the Antigravity process is exiting; the llm-memory wrapper will finalize the session automatically.\n\n" +
-    "Project memory from previous sessions. Treat this as background context.\n\n" +
-    (project?.memory_doc?.trim() ? project.memory_doc.trim() + "\n" : "") +
-    "\n";
-
-  // Primary: .windsurf/rules/llm-memory.md (what Antigravity actually reads)
-  const windsurfRulesDir = join(cwd, ".windsurf", "rules");
-  mkdirSync(windsurfRulesDir, { recursive: true });
-  writeFileSync(join(windsurfRulesDir, "llm-memory.md"), content, "utf8");
-
-  // Fallback: .agent/rules/llm-memory.md
-  const agentRulesDir = join(cwd, ".agent", "rules");
-  mkdirSync(agentRulesDir, { recursive: true });
-  writeFileSync(join(agentRulesDir, "llm-memory.md"), content, "utf8");
-}
-
-// ─── findAntigravityElectronPid ───────────────────────────────────────────────
-
-export function findAntigravityElectronPid(
-  cwd: string,
-  processList?: () => Array<{ pid: number; cmd: string }>
-): number | null {
-  try {
-    let procs: Array<{ pid: number; cmd: string }>;
-
-    if (processList) {
-      procs = processList();
-    } else if (process.platform === "linux") {
-      // Read /proc/*/cmdline to enumerate processes
-      procs = [];
-      let entries: string[];
-      try {
-        entries = readdirSync("/proc");
-      } catch {
-        return null;
-      }
-      for (const entry of entries) {
-        const pid = parseInt(entry, 10);
-        if (isNaN(pid)) continue;
-        try {
-          const cmdlineRaw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-          // cmdline uses null bytes as argument separators — replace with spaces
-          const cmd = cmdlineRaw.replace(/\0/g, " ").trim();
-          procs.push({ pid, cmd });
-        } catch {
-          // process may have exited or we lack permission — skip
-        }
-      }
-    } else {
-      // Other platforms: parse `ps aux`
-      const output = execSync("ps aux", { encoding: "utf8" });
-      procs = [];
-      for (const line of output.split("\n").slice(1)) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 11) continue;
-        const pid = parseInt(parts[1] ?? "", 10);
-        if (isNaN(pid)) continue;
-        const cmd = parts.slice(10).join(" ");
-        procs.push({ pid, cmd });
-      }
-    }
-
-    for (const { pid, cmd } of procs) {
-      // Match the main Electron process: binary path contains the antigravity install dir,
-      // and it's not a child process (child processes all have --type=).
-      const isAntigravityBin = cmd.includes("/share/antigravity/antigravity") ||
-        cmd.includes("/.antigravity/antigravity");
-      const isChildProcess = cmd.includes("--type=");
-      if (isAntigravityBin && !isChildProcess) return pid;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-// ─── isProcessAlive ───────────────────────────────────────────────────────────
-
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ESRCH") return false;
-    return true; // EPERM or other: process exists, we just can't signal it
-  }
+  injectMarkdownContext(join(cwd, "GEMINI.md"), projectId);
 }
 
 // ─── Non-interactive subcommands (bypass wrapper entirely) ───────────────────
 
-// These subcommands don't start an interactive session — pass them straight
-// through to the real binary without any session tracking or MCP setup.
 const BYPASS_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
-  claude:    new Set(["mcp", "doctor", "update", "login", "logout", "config", "completion", "migrate"]),
-  codex:     new Set(["login", "logout", "mcp", "mcp-server", "completion", "debug", "apply", "resume",
-                      "fork", "cloud", "features", "review", "sandbox", "app-server"]),
-  opencode:  new Set(["update", "upgrade", "uninstall", "auth", "mcp", "completion", "debug", "acp",
-                      "serve", "web", "models", "stats", "export", "import", "github", "pr",
-                      "session", "db", "agent"]),
-  gemini:    new Set(["update", "login", "logout", "completion"]),
-  antigravity: new Set(["serve-web", "tunnel"]),
+  claude:   new Set(["mcp", "doctor", "update", "login", "logout", "config", "completion", "migrate"]),
+  codex:    new Set(["login", "logout", "mcp", "mcp-server", "completion", "debug", "apply", "resume",
+                     "fork", "cloud", "features", "review", "sandbox", "app-server"]),
+  opencode: new Set(["update", "upgrade", "uninstall", "auth", "mcp", "completion", "debug", "acp",
+                     "serve", "web", "models", "stats", "export", "import", "github", "pr",
+                     "session", "db", "agent"]),
+  gemini:   new Set(["update", "login", "logout", "completion"]),
 };
 
-const ANTIGRAVITY_OPTIONS_WITH_VALUES = new Set([
-  "-d",
-  "--diff",
-  "-m",
-  "--merge",
-  "-a",
-  "--add",
-  "--remove",
-  "-g",
-  "--goto",
-  "--locale",
-  "--user-data-dir",
-  "--profile",
-  "--extensions-dir",
-  "--category",
-  "--install-extension",
-  "--uninstall-extension",
-  "--log",
-  "--sync",
-  "--inspect-extensions",
-  "--inspect-brk-extensions",
-  "--locate-shell-integration-path",
-  "--add-mcp",
-]);
-
-export function findAntigravitySubcommand(args: string[]): string | null {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg) continue;
-    if (ANTIGRAVITY_OPTIONS_WITH_VALUES.has(arg)) {
-      i++;
-      continue;
-    }
-    if (arg.startsWith("-")) continue;
-    return arg;
-  }
-  return null;
-}
-
 function shouldBypass(tool: string, args: string[]): boolean {
-  const sub = tool === "antigravity"
-    ? findAntigravitySubcommand(args)
-    : args[0];
-  if (tool === "antigravity" && sub !== "chat") return true;
+  const sub = args[0];
   if (!sub || sub.startsWith("-")) return false;
   return BYPASS_SUBCOMMANDS[tool]?.has(sub) ?? false;
 }
@@ -444,21 +256,15 @@ export async function main(): Promise<void> {
     tool: normalizeToolName(tool),
   });
 
-  // Inject project memory into AGENTS.md for Codex and OpenCode (both read it at startup)
-  if ((tool as string) === "codex" || (tool as string) === "opencode") {
+  // Inject project memory at startup
+  if (tool === "codex" || tool === "opencode") {
     try { injectCodexContext(cwd, projectId); } catch { /* best-effort */ }
   }
-  // Inject project memory into GEMINI.md for Gemini CLI
-  if ((tool as string) === "gemini") {
+  if (tool === "gemini") {
     try { injectGeminiContext(cwd, projectId); } catch { /* best-effort */ }
   }
-  if ((tool as string) === "antigravity") {
-    try { injectAntigravityContext(cwd, projectId, sessionId); } catch { /* best-effort */ }
-  }
 
-  // For Claude: write a temp MCP config and inject --mcp-config so Claude
-  // spawns and manages the MCP server itself (proper stdio pipe, not a dead sidecar).
-  // For OpenCode: same approach if it supports --mcp-config; skip for Codex/Gemini.
+  // For Claude: write a temp MCP config and inject --mcp-config
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const mcpScript = join(__dirname, "..", "mcp", "index.js");
   let mcpConfigPath: string | null = null;
@@ -478,9 +284,8 @@ export async function main(): Promise<void> {
     finalToolArgs = ["--mcp-config", mcpConfigPath, ...toolArgs];
   }
 
-  // OpenCode: spawn MCP sidecar the old way (OpenCode's --mcp-config support is unverified)
-  const supportsOldSidecar = (tool as string) === "opencode";
-  const mcpProc = supportsOldSidecar
+  // OpenCode: spawn MCP sidecar
+  const mcpProc = tool === "opencode"
     ? spawn(process.execPath, [mcpScript], {
         stdio: ["ignore", "ignore", "inherit"],
         env: { ...process.env },
@@ -503,66 +308,22 @@ export async function main(): Promise<void> {
   toolProc.on("exit", async (code, signal) => {
     const outcome = resolveOutcome(code, signal);
 
-    // Clean up temp MCP config file written for Claude
     if (mcpConfigPath) {
       try { rmSync(mcpConfigPath); } catch { /* best-effort */ }
     }
 
-    if ((tool as string) !== "antigravity") {
-      // existing behavior for all other tools
-      try {
-        await signalSessionEnd(sessionId, projectId, outcome, code, tool as string, cwd, sessionStartMs);
-      } catch (e) {
-        console.error("[llm-memory] session end failed:", e);
-      }
-      mcpProc?.kill();
-      process.exit(code ?? 0);
-      return;
+    try {
+      await signalSessionEnd(sessionId, projectId, outcome, code, tool, cwd, sessionStartMs);
+    } catch (e) {
+      console.error("[llm-memory] session end failed:", e);
     }
-
-    // Antigravity: CLI exits fast (~immediately), poll the Electron GUI process
-    const pid = findAntigravityElectronPid(cwd);
-    if (pid === null) {
-      try {
-        await signalSessionEnd(sessionId, projectId, outcome, code, tool as string, cwd, sessionStartMs);
-      } catch (e) {
-        console.error("[llm-memory] session end failed:", e);
-      }
-      mcpProc?.kill();
-      process.exit(0);
-      return;
-    }
-
-    const MAX_WAIT_MS = 8 * 60 * 60 * 1000; // 8 hours
-    const POLL_INTERVAL_MS = 2000;
-    const deadline = Date.now() + MAX_WAIT_MS;
-    const poll = setInterval(async () => {
-      const stillAlive = isProcessAlive(pid);
-      const timedOut = Date.now() >= deadline;
-      if (!stillAlive || timedOut) {
-        clearInterval(poll);
-        try {
-          await signalSessionEnd(sessionId, projectId, "completed", 0, tool as string, cwd, sessionStartMs);
-        } catch (e) {
-          console.error("[llm-memory] session end failed:", e);
-        }
-        mcpProc?.kill();
-        process.exit(0);
-      }
-    }, POLL_INTERVAL_MS);
+    mcpProc?.kill();
+    process.exit(code ?? 0);
   });
 }
 
 // ─── Entrypoint ───────────────────────────────────────────────────────────────
 
-// Only run when invoked as a wrapper binary (symlink pointing to this file),
-// not when imported as a module by the CLI or tests.
-// The symlink path (e.g. ~/.llm-memory/bin/claude) never ends with wrapper/index.js,
-// but the real tool wrappers always resolve through detectTool() which reads argv[1].
-// Safe check: skip main() when argv[1] ends with cli/index.js (npm global bin resolves
-// to the real path, but the symlink path at ~/.llm-memory/bin/* does not).
-// Simplest reliable check: only run main() when VITEST is unset AND argv[1] does NOT
-// resolve to the cli entrypoint.
 import { realpathSync as _realpathSync } from "node:fs";
 const _realArgv1 = (() => { try { return _realpathSync(process.argv[1] ?? ""); } catch { return process.argv[1] ?? ""; } })();
 const _isWrapperEntry = !_realArgv1.endsWith("/cli/index.js") && !_realArgv1.endsWith("/cli/index.ts");

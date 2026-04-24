@@ -17,7 +17,6 @@ import {
   handleListSessions,
   handleSearchContext,
   handleEndSession,
-  handleRecordTurn,
   getEventBuffer,
 } from "./handlers.js";
 
@@ -97,44 +96,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "record_turn",
-      description: "Create or resolve a project, persist one conversational turn immediately, and update project memory without relying on app exit hooks.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          project_id: { type: "string" },
-          messages: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                role: { type: "string", enum: ["user", "assistant"] },
-                content: { type: "string" },
-              },
-              required: ["role", "content"],
-            },
-          },
-          events: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                tool: { type: "string" },
-                args: { type: "object" },
-                result: { type: "object" },
-                success: { type: "boolean" },
-              },
-              required: ["tool"],
-            },
-          },
-          tool: { type: "string", enum: ["claude-code", "codex", "gemini", "opencode", "antigravity"] },
-          outcome: { type: "string", enum: ["completed", "interrupted", "crashed"] },
-          exit_code: { type: "integer", nullable: true },
-        },
-        required: ["project_id", "messages"],
-      },
-    },
-    {
       name: "get_project_memory",
       description: "Return the full project memory document (architecture, conventions, recent work, known issues).",
       inputSchema: {
@@ -191,9 +152,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "search_context":
         result = await handleSearchContext(args);
-        break;
-      case "record_turn":
-        result = await handleRecordTurn(args);
         break;
       case "get_project_memory":
         result = await handleGetProjectMemory(args);

@@ -4,7 +4,7 @@
 import { basename } from "node:path";
 import type { ToolName } from "../types/index.js";
 
-const KNOWN_TOOLS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "opencode", "antigravity"]);
+const KNOWN_TOOLS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "opencode"]);
 
 export function detectTool(): ToolName {
   const script = process.argv[1];

@@ -96,7 +96,7 @@ const ListSessionsSchema = z.object({
 const EndSessionSchema = z.object({
   session_id: z.string().min(1),
   project_id: z.string().min(1),
-  tool: z.enum(["claude-code", "codex", "gemini", "opencode", "antigravity"]).optional(),
+  tool: z.enum(["claude-code", "codex", "gemini", "opencode"]).optional(),
   outcome: z.enum(["completed", "interrupted", "crashed"]),
   exit_code: z.number().int().nullable().optional(),
 });
@@ -105,23 +105,6 @@ const SearchContextSchema = z.object({
   query: z.string().min(1),
   project_id: z.string().min(1).optional(),
   limit: z.number().int().positive().default(5),
-});
-
-const RecordTurnSchema = z.object({
-  project_id: z.string().min(1),
-  messages: z.array(z.object({
-    role: z.enum(["user", "assistant"]),
-    content: z.string().min(1),
-  })).min(1),
-  events: z.array(z.object({
-    tool: z.string().min(1),
-    args: z.record(z.string(), z.unknown()).default({}),
-    result: z.record(z.string(), z.unknown()).default({}),
-    success: z.boolean().default(true),
-  })).default([]),
-  tool: z.enum(["claude-code", "codex", "gemini", "opencode", "antigravity"]).default("antigravity"),
-  outcome: z.enum(["completed", "interrupted", "crashed"]).default("completed"),
-  exit_code: z.number().int().nullable().optional(),
 });
 
 // ─── Error helpers ────────────────────────────────────────────────────────────
@@ -309,64 +292,6 @@ export async function handleSearchContext(input: unknown) {
     .filter(Boolean);
 
   return { results, method: "keyword" };
-}
-
-// ─── record_turn ──────────────────────────────────────────────────────────────
-
-export async function handleRecordTurn(input: unknown) {
-  const parsed = RecordTurnSchema.safeParse(input);
-  if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
-
-  const {
-    project_id,
-    messages,
-    events,
-    tool,
-    outcome,
-    exit_code,
-  } = parsed.data;
-
-  const project = resolveProjectRef(project_id);
-  const sessionId = crypto.randomUUID();
-
-  ensureSession({
-    id: sessionId,
-    project_id: project.id,
-    tool: tool as ToolName,
-  });
-
-  for (let i = 0; i < messages.length; i++) {
-    await handleStoreMessage({
-      session_id: sessionId,
-      role: messages[i].role,
-      content: messages[i].content,
-      index: i,
-    });
-  }
-
-  for (const event of events) {
-    await handleStoreEvent({
-      session_id: sessionId,
-      tool: event.tool,
-      args: event.args,
-      result: event.result,
-      success: event.success,
-    });
-  }
-
-  const result = await handleEndSession({
-    session_id: sessionId,
-    project_id: project.id,
-    tool,
-    outcome,
-    exit_code: exit_code ?? null,
-  });
-
-  return {
-    ...(typeof result === "object" && result !== null ? result : {}),
-    session_id: sessionId,
-    project_id: project.id,
-  };
 }
 
 // ─── end_session ──────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ export type UnixMs = number & { readonly _brand: "UnixMs" };
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-export type ToolName = "claude-code" | "codex" | "gemini" | "opencode" | "antigravity";
+export type ToolName = "claude-code" | "codex" | "gemini" | "opencode";
 
 export type SessionOutcome = "completed" | "interrupted" | "crashed";
 

@@ -3,14 +3,10 @@ import {
   resolveOutcome,
   findRealBinary,
   normalizeToolName,
-  injectAntigravityContext,
-  findAntigravitySubcommand,
+  injectCodexContext,
+  injectGeminiContext,
 } from "../../src/wrapper/index.js";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { clearDb } from "../db/helpers.js";
-import { createProject, upsertMemoryDoc } from "../../src/db/index.js";
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
 
@@ -98,64 +94,7 @@ describe("normalizeToolName", () => {
     expect(normalizeToolName("claude")).toBe("claude-code");
   });
 
-  it("leaves antigravity unchanged", () => {
-    expect(normalizeToolName("antigravity")).toBe("antigravity");
-  });
-});
-
-describe("findAntigravitySubcommand", () => {
-  it("finds chat when global options come first", () => {
-    expect(findAntigravitySubcommand([
-      "--user-data-dir",
-      "/tmp/profile",
-      "--transient",
-      "chat",
-      "hello",
-    ])).toBe("chat");
-  });
-
-  it("returns serve-web for non-chat subcommands", () => {
-    expect(findAntigravitySubcommand(["--profile", "test", "serve-web"])).toBe("serve-web");
-  });
-
-  it("returns null when there is no subcommand", () => {
-    expect(findAntigravitySubcommand(["--transient", "--verbose"])).toBeNull();
-  });
-});
-
-describe("injectAntigravityContext", () => {
-  let cwd: string;
-
-  beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), "llm-memory-antigravity-"));
-  });
-
-  afterEach(() => {
-    rmSync(cwd, { recursive: true, force: true });
-  });
-
-  it("writes project memory into .windsurf/rules/llm-memory.md and .agent/rules/llm-memory.md", () => {
-    const project = createProject({
-      name: "proj",
-      path: cwd,
-      git_remote: null,
-      path_hash: "hash-antigravity-test",
-    });
-    upsertMemoryDoc(project.id, "# Project Memory\n\n## Architecture\n- Uses SQLite");
-
-    injectAntigravityContext(cwd, project.id, "session-123");
-
-    // Primary: .windsurf/rules/llm-memory.md
-    const content = readFileSync(join(cwd, ".windsurf", "rules", "llm-memory.md"), "utf8");
-    expect(content).toContain("# llm-memory");
-    expect(content).toContain("session_id: session-123");
-    expect(content).toContain(`project_id: ${project.id}`);
-    expect(content).toContain("store_message");
-    expect(content).toContain("wrapper will finalize the session automatically");
-    expect(content).toContain("Uses SQLite");
-
-    // Fallback: .agent/rules/llm-memory.md should also exist with the same content
-    const agentContent = readFileSync(join(cwd, ".agent", "rules", "llm-memory.md"), "utf8");
-    expect(agentContent).toBe(content);
+  it("leaves gemini unchanged", () => {
+    expect(normalizeToolName("gemini")).toBe("gemini");
   });
 });

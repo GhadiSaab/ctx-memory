@@ -21,13 +21,13 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 export const SessionStartInputSchema = z.object({
   project_path: z.string(),
-  tool: z.enum(["claude-code", "codex", "gemini", "opencode", "antigravity"]),
+  tool: z.enum(["claude-code", "codex", "gemini", "opencode"]),
   git_remote: z.string().nullable().optional(),
 });
 
 export const SessionEndInputSchema = z.object({
   session_id: z.uuid(),
-  tool: z.enum(["claude-code", "codex", "gemini", "opencode", "antigravity"]).optional(),
+  tool: z.enum(["claude-code", "codex", "gemini", "opencode"]).optional(),
   outcome: z.enum(["completed", "interrupted", "crashed"]),
   exit_code: z.number().int().nullable().optional(),
 });
