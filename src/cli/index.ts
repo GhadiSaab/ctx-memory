@@ -227,6 +227,43 @@ export function registerAntigravityMcp(receiverPath: string, antigravityDir: str
   writeLegacyAntigravityMcpConfig(antigravityDir, server);
 }
 
+// ─── registerCodexMcp ────────────────────────────────────────────────────────
+
+/**
+ * Writes the llm-memory MCP server block into ~/.codex/config.toml.
+ * Codex uses TOML and has no --mcp-config flag, so we inject directly.
+ * Idempotent: replaces any existing [mcp_servers.llm-memory] block.
+ */
+export function registerCodexMcp(receiverPath: string, codexConfigPath: string): void {
+  const realReceiver = (() => { try { return fs.realpathSync(receiverPath); } catch { return receiverPath; } })();
+  const mcpScript = path.resolve(path.dirname(realReceiver), "../mcp/index.js");
+  const dbPath = process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".llm-memory", "store.db");
+
+  const block = [
+    `[mcp_servers.llm-memory]`,
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = [${JSON.stringify(mcpScript)}]`,
+    `env_vars = ["LLM_MEMORY_SESSION_ID", "LLM_MEMORY_PROJECT_ID", "LLM_MEMORY_DB_PATH"]`,
+    `# LLM_MEMORY_DB_PATH default: ${dbPath}`,
+  ].join("\n");
+
+  let existing = "";
+  try {
+    existing = fs.readFileSync(codexConfigPath, "utf8");
+  } catch { /* file may not exist yet */ }
+
+  // Replace existing block if present, otherwise append.
+  // Match from the section header to the next section header (or end of string).
+  const hasBlock = /\[mcp_servers\.llm-memory\]/.test(existing);
+  const blockRe = /\n\[mcp_servers\.llm-memory\].*?(?=\n\[|\n*$)/s;
+  const updated = hasBlock
+    ? existing.replace(blockRe, "\n\n" + block)
+    : existing.trimEnd() + (existing.length > 0 ? "\n\n" : "") + block + "\n";
+
+  fs.mkdirSync(path.dirname(codexConfigPath), { recursive: true });
+  fs.writeFileSync(codexConfigPath, updated, "utf8");
+}
+
 // ─── forgetProject ────────────────────────────────────────────────────────────
 
 /**
@@ -436,6 +473,8 @@ async function runSetup(): Promise<void> {
     } else if (tool === "opencode") {
       writeOpenCodeHooks(path.join(homedir(), ".opencode"));
       registerOpenCodeMcp(receiverPath, path.join(homedir(), ".opencode"));
+    } else if (tool === "codex") {
+      registerCodexMcp(receiverPath, path.join(homedir(), ".codex", "config.toml"));
     } else if (tool === "antigravity") {
       registerAntigravityMcp(receiverPath, path.join(homedir(), ".gemini", "antigravity"));
     }
