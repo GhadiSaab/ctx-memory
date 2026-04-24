@@ -11,7 +11,9 @@ Claude never sees memory from previous sessions. The session-start hook script e
 not registered in `~/.claude/settings.json`. The wrapper also does not register it at runtime.
 So Claude starts every session with no prior context.
 
-**Status:** Under investigation
+**Status:** Fixed — root cause was `llm-memory setup` wizard never having been run. Running
+setup writes the SessionStart hook into `~/.claude/settings.json`. Verified: session correctly
+listed all prior sessions in context.
 
 ---
 
@@ -22,18 +24,21 @@ The wrapper spawns an MCP stdio server as a child process alongside Claude, but 
 All MCP tools (`store_message`, `get_project_memory`, `end_session`, etc.) are unreachable
 from within Claude sessions. The sidecar starts and immediately becomes a zombie.
 
-**Status:** Open
+**Status:** Fixed — wrapper now writes a temp `~/.llm-memory/session-<id>.mcp.json` and
+injects `--mcp-config <path>` into Claude's args. Claude spawns and manages the MCP server
+itself with proper stdio pipes. Verified: Claude lists all 7 llm-memory MCP tools live.
 
 ---
 
-## Issue 3 — Codex `exec` subcommand is bypassed
+## Issue 3 — Codex has no MCP connection
 
-`codex exec` is explicitly in the bypass list in `shouldBypass()`. The wrapper passes it
-straight through with no session tracking, no AGENTS.md injection, and no pipeline run at exit.
-Only interactive `codex` (no subcommand) goes through the full wrapper flow — but that requires
-a real TTY and cannot be tested non-interactively.
+Codex uses TOML config (`~/.codex/config.toml`) and has no `--mcp-config` flag like Claude.
+The setup wizard never wrote any MCP entry for Codex, so all llm-memory MCP tools were
+unreachable from Codex sessions.
 
-**Status:** Open
+**Status:** Fixed — setup wizard now writes a `[mcp_servers.llm-memory]` block into
+`~/.codex/config.toml` with `env_vars` forwarding the session context. Verified live:
+Codex exec lists all 7 llm-memory MCP tools.
 
 ---
 
@@ -44,4 +49,6 @@ No `PostToolUse` hook pointing to `~/.llm-memory/bin/hook-receiver` is registere
 hooks. The system falls back entirely to the JSONL reader at session end, which only gives
 a post-hoc snapshot with no real-time event stream.
 
-**Status:** Open
+**Status:** Not an issue — hooks are firing correctly. After running `llm-memory setup`,
+the PostToolUse hook is registered. Verified live: `events` table shows `source: hook`
+entries for bash commands and file writes captured in real-time during the test session.
