@@ -55,16 +55,31 @@ describe("buildClaudeHookConfig", () => {
 // ─── buildGeminiHookConfig ────────────────────────────────────────────────────
 
 describe("buildGeminiHookConfig", () => {
-  it("returns BeforeTool and AfterTool string commands", () => {
+  it("returns AfterTool as an array of matcher objects", () => {
     const config = buildGeminiHookConfig();
-    expect(typeof config.hooks.BeforeTool).toBe("string");
-    expect(typeof config.hooks.AfterTool).toBe("string");
+    expect(Array.isArray(config.hooks.AfterTool)).toBe(true);
+    expect(config.hooks.AfterTool[0]).toHaveProperty("matcher");
+    expect(config.hooks.AfterTool[0]).toHaveProperty("hooks");
   });
 
-  it("commands reference hook-receiver", () => {
+  it("AfterTool hook uses command type and references hook-receiver", () => {
     const config = buildGeminiHookConfig();
-    expect(config.hooks.BeforeTool).toContain("hook-receiver");
-    expect(config.hooks.AfterTool).toContain("hook-receiver");
+    const hook = config.hooks.AfterTool[0].hooks[0];
+    expect(hook.type).toBe("command");
+    expect(hook.command).toContain("hook-receiver");
+  });
+
+  it("AfterTool hook includes $LLM_MEMORY_SESSION_ID", () => {
+    const config = buildGeminiHookConfig();
+    const hook = config.hooks.AfterTool[0].hooks[0];
+    expect(hook.command).toContain("$LLM_MEMORY_SESSION_ID");
+  });
+
+  it("AfterTool hook has a name and timeout", () => {
+    const config = buildGeminiHookConfig();
+    const hook = config.hooks.AfterTool[0].hooks[0];
+    expect(hook.name).toBe("llm-memory-after-tool");
+    expect(hook.timeout).toBeGreaterThan(0);
   });
 });
 
@@ -124,15 +139,15 @@ describe("writeClaudeHooks", () => {
 // ─── writeGeminiHooks ─────────────────────────────────────────────────────────
 
 describe("writeGeminiHooks", () => {
-  it("creates settings.json when it does not exist", () => {
+  it("creates settings.json with AfterTool array when file does not exist", () => {
     writeGeminiHooks(tmpDir);
 
     const written = JSON.parse(readFileSync(join(tmpDir, "settings.json"), "utf8"));
-    expect(written).toHaveProperty("hooks.BeforeTool");
-    expect(written).toHaveProperty("hooks.AfterTool");
+    expect(Array.isArray(written.hooks.AfterTool)).toBe(true);
+    expect(written.hooks.AfterTool[0]).toHaveProperty("matcher");
   });
 
-  it("merges without destroying existing keys", () => {
+  it("merges without destroying existing top-level keys", () => {
     const existing = { theme: "dark", apiKey: "abc123" };
     writeFileSync(join(tmpDir, "settings.json"), JSON.stringify(existing));
 
@@ -141,7 +156,35 @@ describe("writeGeminiHooks", () => {
     const written = JSON.parse(readFileSync(join(tmpDir, "settings.json"), "utf8"));
     expect(written.theme).toBe("dark");
     expect(written.apiKey).toBe("abc123");
-    expect(written).toHaveProperty("hooks.BeforeTool");
+    expect(Array.isArray(written.hooks.AfterTool)).toBe(true);
+  });
+
+  it("preserves existing AfterTool hooks (e.g. GSD hooks) and appends ours", () => {
+    const existing = {
+      hooks: {
+        AfterTool: [
+          {
+            hooks: [{ type: "command", command: "node /path/to/gsd-context-monitor.js" }],
+          },
+        ],
+      },
+    };
+    writeFileSync(join(tmpDir, "settings.json"), JSON.stringify(existing));
+
+    writeGeminiHooks(tmpDir);
+
+    const written = JSON.parse(readFileSync(join(tmpDir, "settings.json"), "utf8"));
+    expect(written.hooks.AfterTool).toHaveLength(2);
+    expect(written.hooks.AfterTool[0].hooks[0].command).toContain("gsd-context-monitor");
+    expect(written.hooks.AfterTool[1].hooks[0].name).toBe("llm-memory-after-tool");
+  });
+
+  it("is idempotent — running twice does not duplicate AfterTool entries", () => {
+    writeGeminiHooks(tmpDir);
+    writeGeminiHooks(tmpDir);
+
+    const written = JSON.parse(readFileSync(join(tmpDir, "settings.json"), "utf8"));
+    expect(written.hooks.AfterTool).toHaveLength(1);
   });
 });
 

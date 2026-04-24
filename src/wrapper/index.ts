@@ -21,6 +21,7 @@ import { readCodexSession } from "./codex.js";
 import { readClaudeSession } from "./claude.js";
 import { readAntigravitySession } from "./antigravity.js";
 import { readOpenCodeSession } from "./opencode.js";
+import { readGeminiSession } from "./gemini.js";
 import type { UUID } from "../types/index.js";
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
@@ -128,6 +129,27 @@ async function signalSessionEnd(
     }
   }
 
+  // For Gemini: read session JSONL post-hoc. Hooks may not fire in non-interactive
+  // mode, so the post-session reader is the reliable data source.
+  if ((tool as string) === "gemini") {
+    const geminiData = readGeminiSession(cwd, sessionStartMs);
+    if (geminiData) {
+      const eventCount = (db.prepare<[string], { count: number }>(
+        "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
+      ).get(sessionId) ?? { count: 0 }).count;
+
+      const stampedMessages = geminiData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
+      const eventsToSeed = eventCount === 0
+        ? geminiData.events
+            .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
+            .filter((e): e is NonNullable<typeof e> => e !== null)
+            .map(e => ({ ...e, session_id: sessionId as UUID }))
+        : [];
+
+      seedBuffers(sessionId, stampedMessages, eventsToSeed);
+    }
+  }
+
   // For Antigravity: read session data from state.vscdb post-hoc
   if ((tool as string) === "antigravity") {
     try {
@@ -197,6 +219,33 @@ export function injectCodexContext(cwd: string, projectId: string): void {
     existing;
 
   writeFileSync(agentsPath, injected, "utf8");
+}
+
+export function injectGeminiContext(cwd: string, projectId: string): void {
+  const project = getProjectById(projectId as UUID);
+  if (!project?.memory_doc) return;
+
+  const geminiMdPath = join(cwd, "GEMINI.md");
+
+  let existing = "";
+  if (existsSync(geminiMdPath)) {
+    const content = readFileSync(geminiMdPath, "utf8");
+    if (content.startsWith(AGENTS_MD_HEADER)) {
+      const markerEnd = content.indexOf("\n<!-- /llm-memory -->");
+      existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /llm-memory -->".length) : "";
+    } else {
+      existing = "\n" + content;
+    }
+  }
+
+  const injected =
+    AGENTS_MD_HEADER +
+    "# Project Memory (from previous sessions)\n\n" +
+    project.memory_doc.trim() +
+    "\n<!-- /llm-memory -->" +
+    existing;
+
+  writeFileSync(geminiMdPath, injected, "utf8");
 }
 
 export function injectAntigravityContext(cwd: string, projectId: string, sessionId: string): void {
@@ -398,6 +447,10 @@ export async function main(): Promise<void> {
   // Inject project memory into AGENTS.md for Codex and OpenCode (both read it at startup)
   if ((tool as string) === "codex" || (tool as string) === "opencode") {
     try { injectCodexContext(cwd, projectId); } catch { /* best-effort */ }
+  }
+  // Inject project memory into GEMINI.md for Gemini CLI
+  if ((tool as string) === "gemini") {
+    try { injectGeminiContext(cwd, projectId); } catch { /* best-effort */ }
   }
   if ((tool as string) === "antigravity") {
     try { injectAntigravityContext(cwd, projectId, sessionId); } catch { /* best-effort */ }

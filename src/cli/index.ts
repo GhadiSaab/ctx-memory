@@ -227,6 +227,46 @@ export function registerAntigravityMcp(receiverPath: string, antigravityDir: str
   writeLegacyAntigravityMcpConfig(antigravityDir, server);
 }
 
+// ─── registerGeminiMcp ───────────────────────────────────────────────────────
+
+/**
+ * Registers the llm-memory MCP server in ~/.gemini/settings.json under mcpServers.
+ * Idempotent: merges without overwriting unrelated keys.
+ */
+export function registerGeminiMcp(receiverPath: string, geminiDir: string): void {
+  const realReceiver = (() => { try { return fs.realpathSync(receiverPath); } catch { return receiverPath; } })();
+  const mcpScript = path.resolve(path.dirname(realReceiver), "../mcp/index.js");
+
+  const configPath = path.join(geminiDir, "settings.json");
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  } catch { /* file may not exist yet */ }
+
+  const existingMcp = (typeof existing["mcpServers"] === "object" && existing["mcpServers"] !== null)
+    ? (existing["mcpServers"] as Record<string, unknown>)
+    : {};
+
+  const merged = {
+    ...existing,
+    mcpServers: {
+      ...existingMcp,
+      "llm-memory": {
+        command: process.execPath,
+        args: [mcpScript],
+        env: {
+          LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? "",
+        },
+        trust: true,
+      },
+    },
+  };
+
+  fs.mkdirSync(geminiDir, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+}
+
 // ─── registerCodexMcp ────────────────────────────────────────────────────────
 
 /**
@@ -469,7 +509,9 @@ async function runSetup(): Promise<void> {
       writeClaudeHooks(path.join(homedir(), ".claude"), path.join(llmBin, "session-start"));
       registerClaudeMcp(receiverPath);
     } else if (tool === "gemini") {
-      writeGeminiHooks(path.join(homedir(), ".gemini"));
+      const geminiDir = path.join(homedir(), ".gemini");
+      writeGeminiHooks(geminiDir);
+      registerGeminiMcp(receiverPath, geminiDir);
     } else if (tool === "opencode") {
       writeOpenCodeHooks(path.join(homedir(), ".config", "opencode"));
       registerOpenCodeMcp(receiverPath, path.join(homedir(), ".config", "opencode"));

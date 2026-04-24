@@ -95,6 +95,7 @@ function mergeClaudeHookArray(
 
 /**
  * Merges llm-memory hooks into ~/.gemini/settings.json.
+ * Uses Gemini's array hook format; preserves existing AfterTool entries.
  * @param geminiDir  path to the ~/.gemini directory
  */
 export function writeGeminiHooks(geminiDir: string): void {
@@ -102,17 +103,51 @@ export function writeGeminiHooks(geminiDir: string): void {
   const existing = readJson(filePath);
   const hookConfig = buildGeminiHookConfig();
 
+  const existingHooks = (typeof existing["hooks"] === "object" && existing["hooks"] !== null)
+    ? (existing["hooks"] as Record<string, unknown>)
+    : {};
+
+  const mergedAfterTool = mergeGeminiHookArray(
+    existingHooks["AfterTool"],
+    hookConfig.hooks.AfterTool
+  );
+
   const merged = {
     ...existing,
     hooks: {
-      ...(typeof existing["hooks"] === "object" && existing["hooks"] !== null
-        ? (existing["hooks"] as Record<string, unknown>)
-        : {}),
-      ...hookConfig.hooks,
+      ...existingHooks,
+      AfterTool: mergedAfterTool,
     },
   };
 
   writeJson(filePath, merged);
+}
+
+/**
+ * Merges our AfterTool matcher entries into the existing array.
+ * Deduplicates by hook name so setup is idempotent.
+ */
+function mergeGeminiHookArray(
+  existing: unknown,
+  additions: Array<{ matcher: string; hooks: Array<{ name: string; type: string; command: string; timeout: number }> }>
+): unknown[] {
+  const arr = Array.isArray(existing) ? (existing as unknown[]) : [];
+
+  for (const addition of additions) {
+    const ourName = addition.hooks[0]?.name;
+    const alreadyPresent = arr.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const e = entry as Record<string, unknown>;
+      const hooks = e["hooks"];
+      return Array.isArray(hooks) &&
+        hooks.some((h) => typeof h === "object" && h !== null && (h as Record<string, unknown>)["name"] === ourName);
+    });
+    if (!alreadyPresent) {
+      arr.push(addition);
+    }
+  }
+
+  return arr;
 }
 
 // ─── writeOpenCodeHooks ───────────────────────────────────────────────────────
