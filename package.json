@@ -1,14 +1,38 @@
 {
   "name": "llm-memory",
-  "version": "0.1.0",
-  "description": "Persistent memory layer for LLM conversations using SQLite and MCP",
+  "version": "1.0.0",
+  "description": "Persistent memory layer for LLM coding agents (Claude Code, Codex, Gemini, OpenCode) — zero cloud, local SQLite + MCP",
   "type": "module",
+  "keywords": [
+    "llm",
+    "memory",
+    "mcp",
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "sqlite",
+    "ai",
+    "coding-agent"
+  ],
+  "author": "Ghadi Saab",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GhadiSaab/llm-memory.git"
+  },
+  "homepage": "https://github.com/GhadiSaab/llm-memory#readme",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "llm-memory": "./dist/src/cli/index.js"
   },
   "scripts": {
-    "prepare": "tsc",
-    "build": "tsc",
+    "prepare": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:run": "vitest run",
