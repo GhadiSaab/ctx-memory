@@ -8,6 +8,7 @@ import type { Message, UUID, ToolName } from "../types/index.js";
 import {
   getProjectById,
   getProjectByPathHash,
+  getProjectByName,
   getRecentSessionsByProject,
   ensureSession,
   closeSession,
@@ -215,12 +216,13 @@ export async function handleGetProjectMemory(input: unknown) {
   const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
   if (!project_id) return err("project_id required", "INVALID_INPUT");
 
-  // Try UUID lookup first, then path-hash lookup (Claude Code passes cwd as project_id)
+  // Try UUID → path-hash → name (agents often pass project name as project_id)
   let project = getProjectById(project_id as UUID);
   if (!project) {
     const pathHash = createHash("sha256").update(project_id).digest("hex");
     project = getProjectByPathHash(pathHash);
   }
+  if (!project) project = getProjectByName(project_id);
   if (!project) return err("Project not found", "NOT_FOUND");
 
   return { memory_doc: project.memory_doc };
@@ -232,10 +234,19 @@ export async function handleListSessions(input: unknown) {
   const parsed = ListSessionsSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
-  if (!project_id) return err("project_id required", "INVALID_INPUT");
+  const raw_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+  if (!raw_id) return err("project_id required", "INVALID_INPUT");
   const { limit } = parsed.data;
-  const sessions = getRecentSessionsByProject(project_id as UUID, limit);
+
+  let project = getProjectById(raw_id as UUID);
+  if (!project) {
+    const pathHash = createHash("sha256").update(raw_id).digest("hex");
+    project = getProjectByPathHash(pathHash);
+  }
+  if (!project) project = getProjectByName(raw_id);
+  if (!project) return err("Project not found", "NOT_FOUND");
+
+  const sessions = getRecentSessionsByProject(project.id, limit);
 
   return {
     sessions: sessions.map((s) => ({
@@ -254,9 +265,18 @@ export async function handleSearchContext(input: unknown) {
   const parsed = SearchContextSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
-  if (!project_id) return err("project_id required", "INVALID_INPUT");
+  const raw_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+  if (!raw_id) return err("project_id required", "INVALID_INPUT");
   const { query, limit } = parsed.data;
+
+  let project = getProjectById(raw_id as UUID);
+  if (!project) {
+    const pathHash = createHash("sha256").update(raw_id).digest("hex");
+    project = getProjectByPathHash(pathHash);
+  }
+  if (!project) project = getProjectByName(raw_id);
+  if (!project) return err("Project not found", "NOT_FOUND");
+  const project_id = project.id;
 
   try {
     // Try embedding search first

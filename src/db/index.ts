@@ -7,6 +7,7 @@ export {
   getProjectById,
   getProjectByGitRemote,
   getProjectByPathHash,
+  getProjectByName,
   upsertMemoryDoc,
   updateProjectPath,
 } from "./projects.js";

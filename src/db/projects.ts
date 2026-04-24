@@ -47,6 +47,10 @@ const stmtFindByPathHash = db.prepare<[string], ProjectRow>(`
   SELECT * FROM projects WHERE path_hash = ?
 `);
 
+const stmtFindByName = db.prepare<[string], ProjectRow>(`
+  SELECT * FROM projects WHERE name = ? ORDER BY updated_at DESC LIMIT 1
+`);
+
 const stmtUpdateMemoryDoc = db.prepare<[string, number, string]>(`
   UPDATE projects SET memory_doc = ?, updated_at = ? WHERE id = ?
 `);
@@ -90,6 +94,11 @@ export function getProjectByGitRemote(gitRemote: string): Project | null {
 
 export function getProjectByPathHash(pathHash: string): Project | null {
   const row = stmtFindByPathHash.get(pathHash);
+  return row ? rowToProject(row) : null;
+}
+
+export function getProjectByName(name: string): Project | null {
+  const row = stmtFindByName.get(name);
   return row ? rowToProject(row) : null;
 }
 
