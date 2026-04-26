@@ -157,6 +157,19 @@ describe("handleGetProjectMemory", () => {
 // ─── list_sessions ────────────────────────────────────────────────────────────
 
 describe("handleListSessions", () => {
+  it("falls back to CTX_MEMORY_PROJECT_ID when no project_id is provided", async () => {
+    const project = seedProject();
+    const session = seedSession(project.id);
+    process.env["CTX_MEMORY_PROJECT_ID"] = project.id;
+
+    try {
+      const result = r(await handleListSessions({}));
+      expect(result.sessions.map((s: any) => s.id)).toContain(session.id);
+    } finally {
+      delete process.env["CTX_MEMORY_PROJECT_ID"];
+    }
+  });
+
   it("returns a summary list for the given project", async () => {
     const project = seedProject();
     const s1 = seedSession(project.id);
@@ -197,11 +210,6 @@ describe("handleListSessions", () => {
     expect(result.sessions).toHaveLength(2);
   });
 
-  // TODO: cwd fallback behavior needs investigation — test disabled temporarily
-  // it("falls back to cwd when no project_id provided", async () => {
-  //   const result = await handleListSessions({} as any);
-  //   expect(result).toHaveProperty("sessions");
-  // });
 });
 
 // ─── end_session ──────────────────────────────────────────────────────────────

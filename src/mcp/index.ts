@@ -22,8 +22,8 @@ import {
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
 
-const SESSION_ID = process.env["LLM_MEMORY_SESSION_ID"] ?? null;
-const PROJECT_ID = process.env["LLM_MEMORY_PROJECT_ID"] ?? null;
+const SESSION_ID = process.env["CTX_MEMORY_SESSION_ID"] ?? process.env["LLM_MEMORY_SESSION_ID"] ?? null;
+const PROJECT_ID = process.env["CTX_MEMORY_PROJECT_ID"] ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? null;
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
@@ -31,21 +31,21 @@ const PROJECT_ID = process.env["LLM_MEMORY_PROJECT_ID"] ?? null;
 try {
   const closed = sweepOrphanedSessions(60); // 60-minute timeout
   if (closed.length > 0) {
-    console.error(`[llm-memory] swept ${closed.length} orphaned session(s)`);
+    console.error(`[ctx-memory] swept ${closed.length} orphaned session(s)`);
   }
 } catch (e) {
-  console.error("[llm-memory] orphan sweep failed:", e);
+  console.error("[ctx-memory] orphan sweep failed:", e);
 }
 
 // 2. Load embedder in background — don't block server startup
 loadEmbedder().catch((e) => {
-  console.error("[llm-memory] embedder failed to load (search_context will use keyword fallback):", e);
+  console.error("[ctx-memory] embedder failed to load (search_context will use keyword fallback):", e);
 });
 
 // ─── MCP server ───────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "llm-memory", version: "0.1.0" },
+  { name: "ctx-memory", version: "1.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -92,7 +92,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           project_id: { type: "string" },
           limit: { type: "integer", minimum: 1, default: 5 },
         },
-        required: ["query", "project_id"],
+        required: ["query"],
       },
     },
     {
@@ -103,7 +103,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           project_id: { type: "string" },
         },
-        required: ["project_id"],
       },
     },
     {
@@ -115,7 +114,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           project_id: { type: "string" },
           limit: { type: "integer", minimum: 1, default: 20 },
         },
-        required: ["project_id"],
       },
     },
     {
@@ -166,7 +164,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = { error: `Unknown tool: ${name}`, code: "UNKNOWN_TOOL" };
     }
   } catch (e) {
-    console.error(`[llm-memory] tool ${name} threw unexpectedly:`, e);
+    console.error(`[ctx-memory] tool ${name} threw unexpectedly:`, e);
     result = { error: String(e), code: "INTERNAL_ERROR" };
   }
 
@@ -178,7 +176,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ─── SIGTERM — flush and shut down cleanly ────────────────────────────────────
 
 process.on("SIGTERM", async () => {
-  console.error("[llm-memory] SIGTERM received — shutting down");
+  console.error("[ctx-memory] SIGTERM received — shutting down");
 
   // If the wrapper set a session ID, trigger session end on SIGTERM —
   // but only if the wrapper hasn't already processed it (digest not yet written).
@@ -195,7 +193,7 @@ process.on("SIGTERM", async () => {
           exit_code: null,
         });
       } catch (e) {
-        console.error("[llm-memory] end_session failed:", e);
+        console.error("[ctx-memory] end_session failed:", e);
       }
     }
   }

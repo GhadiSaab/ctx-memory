@@ -33,7 +33,7 @@ function writeJson(filePath: string, data: unknown): void {
 // ─── writeClaudeHooks ─────────────────────────────────────────────────────────
 
 /**
- * Merges llm-memory hooks into .claude/settings.json.
+ * Merges ctx-memory hooks into .claude/settings.json.
  * @param claudeDir  path to the .claude/ directory (e.g. ~/.claude or <project>/.claude)
  */
 export function writeClaudeHooks(claudeDir: string, sessionStartBin: string): void {
@@ -94,7 +94,7 @@ function mergeClaudeHookArray(
 // ─── writeGeminiHooks ─────────────────────────────────────────────────────────
 
 /**
- * Merges llm-memory hooks into ~/.gemini/settings.json.
+ * Merges ctx-memory hooks into ~/.gemini/settings.json.
  * Uses Gemini's array hook format; preserves existing AfterTool entries.
  * @param geminiDir  path to the ~/.gemini directory
  */
@@ -153,7 +153,7 @@ function mergeGeminiHookArray(
 // ─── writeOpenCodeHooks ───────────────────────────────────────────────────────
 
 /**
- * Writes the llm-memory OpenCode plugin into ~/.config/opencode/plugins.
+ * Writes the ctx-memory OpenCode plugin into ~/.config/opencode/plugins.
  * @param openCodeDir  path to the OpenCode config directory
  */
 export function writeOpenCodeHooks(openCodeDir: string): void {

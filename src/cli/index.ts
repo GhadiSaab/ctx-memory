@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// CLI entry point for llm-memory.
-// Usage: llm-memory <setup|status|projects <list|show|forget>>
+// CLI entry point for ctx-memory.
+// Usage: ctx-memory <setup|status|projects <list|show|forget>>
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { db, getConfigValue, setConfigValue } from "../db/index.js";
 import { writeClaudeHooks, writeGeminiHooks, writeOpenCodeHooks } from "../hooks/index.js";
 import type { UUID, ToolName } from "../types/index.js";
@@ -22,8 +22,10 @@ const TOOL_BINARY: Record<ToolName, string> = {
   "opencode": "opencode",
 };
 
-const PATH_COMMENT = "# llm-memory";
-const PATH_LINE = 'export PATH="$HOME/.llm-memory/bin:$PATH"';
+const PATH_COMMENT = "# ctx-memory";
+const PATH_LINE = 'export PATH="$HOME/.ctx-memory/bin:$PATH"';
+const APP_NAME = "ctx-memory";
+const LEGACY_APP_NAME = "llm-memory";
 
 export interface ProjectSummary {
   id: string;
@@ -67,6 +69,9 @@ export function createWrapperSymlink(
   binDir: string
 ): void {
   const linkPath = path.join(binDir, toolName);
+  if (fs.existsSync(wrapperPath)) {
+    fs.chmodSync(wrapperPath, 0o755);
+  }
   try {
     fs.lstatSync(linkPath);
     fs.unlinkSync(linkPath);
@@ -79,7 +84,7 @@ export function createWrapperSymlink(
 // ─── injectPathLine ───────────────────────────────────────────────────────────
 
 /**
- * Appends the # llm-memory comment + PATH export line to shellRcPath if not already present.
+ * Appends the # ctx-memory comment + PATH export line to shellRcPath if not already present.
  * Returns true if the line was appended, false if it was already there.
  * Creates the file if it does not exist.
  */
@@ -102,30 +107,40 @@ export function injectPathLine(shellRcPath: string): boolean {
 // ─── registerClaudeMcp ───────────────────────────────────────────────────────
 
 /**
- * Registers the llm-memory MCP server with Claude Code using `claude mcp add`.
+ * Registers the ctx-memory MCP server with Claude Code using `claude mcp add`.
  * Idempotent: removes existing entry first (claude mcp add --scope user).
  */
 function registerClaudeMcp(receiverPath: string): void {
   const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
   try {
     // Remove existing registration (ignore errors if not registered yet)
-    execSync(`claude mcp remove llm-memory --scope user 2>/dev/null || true`, { stdio: "pipe" });
-    execSync(
-      `claude mcp add --scope user llm-memory -- node ${mcpScript}`,
+    try {
+      execFileSync("claude", ["mcp", "remove", APP_NAME, "--scope", "user"], { stdio: "pipe" });
+    } catch {
+      // not registered yet
+    }
+    try {
+      execFileSync("claude", ["mcp", "remove", LEGACY_APP_NAME, "--scope", "user"], { stdio: "pipe" });
+    } catch {
+      // legacy name not registered
+    }
+    execFileSync(
+      "claude",
+      ["mcp", "add", "--scope", "user", APP_NAME, "--", process.execPath, mcpScript],
       { stdio: "pipe" }
     );
   } catch {
     // Non-fatal: user can register manually
     console.warn("  Warning: could not auto-register MCP server. Run manually:");
-    console.warn(`    claude mcp add --scope user llm-memory -- node ${mcpScript}`);
+    console.warn(`    claude mcp add --scope user ${APP_NAME} -- ${process.execPath} ${mcpScript}`);
   }
 }
 
 // ─── registerOpenCodeMcp ─────────────────────────────────────────────────────
 
 /**
- * Registers the llm-memory MCP server in ~/.opencode/config.json under the mcp key.
- * Idempotent: overwrites any existing llm-memory entry.
+ * Registers the ctx-memory MCP server in ~/.opencode/config.json under the mcp key.
+ * Idempotent: overwrites any existing ctx-memory entry.
  */
 function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
   const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
@@ -144,14 +159,19 @@ function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
     ...existing,
     mcp: {
       ...existingMcp,
-      "llm-memory": {
+      [LEGACY_APP_NAME]: undefined,
+      [APP_NAME]: {
         type: "local",
         command: [process.execPath, mcpScript],
         enabled: true,
-        environment: { LLM_MEMORY_DB_PATH: "{env:LLM_MEMORY_DB_PATH}" },
+        environment: {
+          CTX_MEMORY_DB_PATH: "{env:CTX_MEMORY_DB_PATH}",
+          LLM_MEMORY_DB_PATH: "{env:LLM_MEMORY_DB_PATH}",
+        },
       },
     },
   };
+  delete (merged.mcp as Record<string, unknown>)[LEGACY_APP_NAME];
 
   fs.mkdirSync(openCodeDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
@@ -160,7 +180,7 @@ function registerOpenCodeMcp(receiverPath: string, openCodeDir: string): void {
 // ─── registerGeminiMcp ───────────────────────────────────────────────────────
 
 /**
- * Registers the llm-memory MCP server in ~/.gemini/settings.json under mcpServers.
+ * Registers the ctx-memory MCP server in ~/.gemini/settings.json under mcpServers.
  * Idempotent: merges without overwriting unrelated keys.
  */
 export function registerGeminiMcp(receiverPath: string, geminiDir: string): void {
@@ -182,16 +202,19 @@ export function registerGeminiMcp(receiverPath: string, geminiDir: string): void
     ...existing,
     mcpServers: {
       ...existingMcp,
-      "llm-memory": {
+      [LEGACY_APP_NAME]: undefined,
+      [APP_NAME]: {
         command: process.execPath,
         args: [mcpScript],
         env: {
-          LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? "",
+          CTX_MEMORY_DB_PATH: process.env["CTX_MEMORY_DB_PATH"] ?? process.env["LLM_MEMORY_DB_PATH"] ?? "",
+          LLM_MEMORY_DB_PATH: process.env["LLM_MEMORY_DB_PATH"] ?? process.env["CTX_MEMORY_DB_PATH"] ?? "",
         },
         trust: true,
       },
     },
   };
+  delete (merged.mcpServers as Record<string, unknown>)[LEGACY_APP_NAME];
 
   fs.mkdirSync(geminiDir, { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
@@ -200,21 +223,21 @@ export function registerGeminiMcp(receiverPath: string, geminiDir: string): void
 // ─── registerCodexMcp ────────────────────────────────────────────────────────
 
 /**
- * Writes the llm-memory MCP server block into ~/.codex/config.toml.
+ * Writes the ctx-memory MCP server block into ~/.codex/config.toml.
  * Codex uses TOML and has no --mcp-config flag, so we inject directly.
- * Idempotent: replaces any existing [mcp_servers.llm-memory] block.
+ * Idempotent: replaces any existing [mcp_servers.ctx-memory] block.
  */
 export function registerCodexMcp(receiverPath: string, codexConfigPath: string): void {
   const realReceiver = (() => { try { return fs.realpathSync(receiverPath); } catch { return receiverPath; } })();
   const mcpScript = path.resolve(path.dirname(realReceiver), "../mcp/index.js");
-  const dbPath = process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".llm-memory", "store.db");
+  const dbPath = process.env["CTX_MEMORY_DB_PATH"] ?? process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".ctx-memory", "store.db");
 
   const block = [
-    `[mcp_servers.llm-memory]`,
+    `[mcp_servers.${APP_NAME}]`,
     `command = ${JSON.stringify(process.execPath)}`,
     `args = [${JSON.stringify(mcpScript)}]`,
-    `env_vars = ["LLM_MEMORY_SESSION_ID", "LLM_MEMORY_PROJECT_ID", "LLM_MEMORY_DB_PATH"]`,
-    `# LLM_MEMORY_DB_PATH default: ${dbPath}`,
+    `env_vars = ["CTX_MEMORY_SESSION_ID", "CTX_MEMORY_PROJECT_ID", "CTX_MEMORY_DB_PATH", "LLM_MEMORY_SESSION_ID", "LLM_MEMORY_PROJECT_ID", "LLM_MEMORY_DB_PATH"]`,
+    `# CTX_MEMORY_DB_PATH default: ${dbPath}`,
   ].join("\n");
 
   let existing = "";
@@ -224,11 +247,11 @@ export function registerCodexMcp(receiverPath: string, codexConfigPath: string):
 
   // Replace existing block if present, otherwise append.
   // Match from the section header to the next section header (or end of string).
-  const hasBlock = /\[mcp_servers\.llm-memory\]/.test(existing);
-  const blockRe = /\n\[mcp_servers\.llm-memory\].*?(?=\n\[|\n*$)/s;
-  const updated = hasBlock
-    ? existing.replace(blockRe, "\n\n" + block)
-    : existing.trimEnd() + (existing.length > 0 ? "\n\n" : "") + block + "\n";
+  const withoutOldBlocks = existing
+    .replace(/\n?\[mcp_servers\.ctx-memory\].*?(?=\n\[|\n*$)/gs, "")
+    .replace(/\n?\[mcp_servers\.llm-memory\].*?(?=\n\[|\n*$)/gs, "")
+    .trimEnd();
+  const updated = withoutOldBlocks + (withoutOldBlocks.length > 0 ? "\n\n" : "") + block + "\n";
 
   fs.mkdirSync(path.dirname(codexConfigPath), { recursive: true });
   fs.writeFileSync(codexConfigPath, updated, "utf8");
@@ -351,7 +374,7 @@ async function main(): Promise<void> {
       runProjectsForget(args[2], args.includes("--hard"));
     } else {
       console.error(`Unknown projects subcommand: ${sub ?? "(none)"}`);
-      console.error('Usage: llm-memory projects <list|show <name>|forget <name> [--hard]>');
+      console.error('Usage: ctx-memory projects <list|show <name>|forget <name> [--hard]>');
       process.exit(1);
     }
     return;
@@ -363,7 +386,7 @@ async function main(): Promise<void> {
 }
 
 function printHelp(): void {
-  console.log(`llm-memory — persistent memory for LLM coding agents
+  console.log(`ctx-memory — persistent memory for LLM coding agents
 
 Commands:
   setup                          Interactive setup wizard
@@ -385,12 +408,12 @@ async function runSetup(): Promise<void> {
 
   if (detected.length === 0) {
     console.log("No supported tools found in PATH (claude, codex, gemini, opencode).");
-    console.log("Install a tool first, then run llm-memory setup again.");
+    console.log("Install a tool first, then run ctx-memory setup again.");
     return;
   }
 
   const selected = await checkbox({
-    message: "Which tools do you want llm-memory to integrate with?",
+    message: "Which tools do you want ctx-memory to integrate with?",
     choices: detected.map((t) => ({ name: t, value: t, checked: true })),
   }) as ToolName[];
 
@@ -404,9 +427,9 @@ async function runSetup(): Promise<void> {
     default: false,
   });
 
-  // Ensure ~/.llm-memory/bin exists
-  const llmBin = path.join(homedir(), ".llm-memory", "bin");
-  fs.mkdirSync(llmBin, { recursive: true });
+  // Ensure ~/.ctx-memory/bin exists
+  const ctxBin = path.join(homedir(), ".ctx-memory", "bin");
+  fs.mkdirSync(ctxBin, { recursive: true });
 
   // Resolve paths relative to this script's install location
   const scriptDir = path.dirname(new URL(import.meta.url).pathname);
@@ -415,15 +438,15 @@ async function runSetup(): Promise<void> {
   const sessionStartPath = path.resolve(scriptDir, "../hooks/session-start.js");
 
   // Always create hook-receiver + session-start symlinks
-  createWrapperSymlink("hook-receiver", receiverPath, llmBin);
-  createWrapperSymlink("session-start", sessionStartPath, llmBin);
+  createWrapperSymlink("hook-receiver", receiverPath, ctxBin);
+  createWrapperSymlink("session-start", sessionStartPath, ctxBin);
 
   const results: string[] = [];
 
   for (const tool of selected) {
     // Write hook configs + register MCP server
     if (tool === "claude-code") {
-      writeClaudeHooks(path.join(homedir(), ".claude"), path.join(llmBin, "session-start"));
+      writeClaudeHooks(path.join(homedir(), ".claude"), path.join(ctxBin, "session-start"));
       registerClaudeMcp(receiverPath);
     } else if (tool === "gemini") {
       const geminiDir = path.join(homedir(), ".gemini");
@@ -436,7 +459,7 @@ async function runSetup(): Promise<void> {
       registerCodexMcp(receiverPath, path.join(homedir(), ".codex", "config.toml"));
     }
     // Create wrapper symlink named after the binary (e.g. "claude", not "claude-code")
-    createWrapperSymlink(TOOL_BINARY[tool], wrapperPath, llmBin);
+    createWrapperSymlink(TOOL_BINARY[tool], wrapperPath, ctxBin);
     results.push(tool);
   }
 
@@ -454,7 +477,7 @@ async function runSetup(): Promise<void> {
   setConfigValue("store_raw_messages", storeRaw);
 
   // Summary
-  console.log("\n✓ llm-memory setup complete!\n");
+  console.log("\n✓ ctx-memory setup complete!\n");
   console.log(`  Tools configured: ${results.join(", ")}`);
   if (injected.length > 0) {
     console.log(`  PATH updated in: ${injected.map((r) => `~/${r}`).join(", ")}`);
@@ -466,7 +489,7 @@ async function runSetup(): Promise<void> {
 // ─── status ───────────────────────────────────────────────────────────────────
 
 function runStatus(): void {
-  const dbPath = process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".llm-memory", "store.db");
+  const dbPath = process.env["CTX_MEMORY_DB_PATH"] ?? process.env["LLM_MEMORY_DB_PATH"] ?? path.join(homedir(), ".ctx-memory", "store.db");
 
   // DB size
   let dbSize = "not found";
@@ -503,7 +526,7 @@ function runStatus(): void {
     )
   ) as { version: string };
 
-  console.log(`llm-memory v${version}`);
+  console.log(`ctx-memory v${version}`);
   console.log(`DB: ${dbPath.replace(homedir(), "~")} (${dbSize})`);
   console.log(`Tools: ${toolLine}`);
   console.log(`Sessions: ${totalSessions} total`);
@@ -545,7 +568,7 @@ function runProjectsList(): void {
 
 function runProjectsShow(name: string | undefined): void {
   if (!name) {
-    console.error("Usage: llm-memory projects show <name>");
+    console.error("Usage: ctx-memory projects show <name>");
     process.exit(1);
   }
   const project = getProjectByName(name);
@@ -567,7 +590,7 @@ function runProjectsShow(name: string | undefined): void {
 
 function runProjectsForget(name: string | undefined, hard: boolean): void {
   if (!name) {
-    console.error("Usage: llm-memory projects forget <name> [--hard]");
+    console.error("Usage: ctx-memory projects forget <name> [--hard]");
     process.exit(1);
   }
   const project = getProjectByName(name);

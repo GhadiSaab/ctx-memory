@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// quality-test.mjs — end-to-end output quality validator for the llm-memory pipeline.
+// quality-test.mjs — end-to-end output quality validator for the ctx-memory pipeline.
 //
 // Tests the full pipeline (Layer 1 → 2 → 3) on synthetic "hard" scenarios that
 // mirror real-world bad patterns (brainstorming Q&A, skill dumps, long assistant replies).
@@ -334,7 +334,7 @@ const SCENARIOS = [
 
 // ─── Run synthetic scenarios ──────────────────────────────────────────────────
 
-console.log(`\n${B}llm-memory quality test${R}`);
+console.log(`\n${B}ctx-memory quality test${R}`);
 console.log(`${D}Validating pipeline output quality across synthetic scenarios${R}\n`);
 
 let totalPassed = 0, totalFailed = 0, totalWarned = 0;

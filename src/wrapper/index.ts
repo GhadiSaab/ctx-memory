@@ -4,13 +4,13 @@
 // and triggers session end on exit.
 
 import { spawn, execFileSync } from "node:child_process";
-import { accessSync, constants, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { accessSync, constants, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { v4 as uuid } from "uuid";
-import type { SessionOutcome, ToolName } from "../types/index.js";
+import type { Message, SessionOutcome, ToolName } from "../types/index.js";
 import { detectTool } from "./detect.js";
 import { resolveProject } from "./project.js";
 import { handleEndSession, seedBuffers, getMessageBuffer, getEventBuffer } from "../mcp/handlers.js";
@@ -22,6 +22,18 @@ import { readClaudeSession } from "./claude.js";
 import { readOpenCodeSession } from "./opencode.js";
 import { readGeminiSession } from "./gemini.js";
 import type { UUID } from "../types/index.js";
+
+type RawPostHocEvent = {
+  tool: string;
+  args: Record<string, unknown>;
+  result: Record<string, unknown>;
+  success: boolean;
+};
+
+type PostHocSessionData = {
+  messages: Message[];
+  events: RawPostHocEvent[];
+};
 
 // ─── resolveOutcome ───────────────────────────────────────────────────────────
 
@@ -37,12 +49,18 @@ export function resolveOutcome(
 
 // ─── findRealBinary ───────────────────────────────────────────────────────────
 
-const LLM_MEMORY_BIN = join(homedir(), ".llm-memory", "bin");
+const CTX_MEMORY_BIN = join(homedir(), ".ctx-memory", "bin");
+const LEGACY_MEMORY_BIN = join(homedir(), ".llm-memory", "bin");
 
 export function findRealBinary(toolName: string, pathDirs: string[]): string {
   for (const dir of pathDirs) {
     // Skip our own shim directory to avoid infinite recursion
-    if (dir === LLM_MEMORY_BIN || dir.includes(".llm-memory/bin")) continue;
+    if (
+      dir === CTX_MEMORY_BIN ||
+      dir === LEGACY_MEMORY_BIN ||
+      dir.includes(".ctx-memory/bin") ||
+      dir.includes(".llm-memory/bin")
+    ) continue;
     const candidate = join(dir, toolName);
     try {
       accessSync(candidate, constants.X_OK);
@@ -51,12 +69,30 @@ export function findRealBinary(toolName: string, pathDirs: string[]): string {
       // not found or not executable — try next
     }
   }
-  throw new Error(`[llm-memory] Cannot find real '${toolName}' binary in PATH (excluding ${LLM_MEMORY_BIN})`);
+  throw new Error(`[ctx-memory] Cannot find real '${toolName}' binary in PATH (excluding ${CTX_MEMORY_BIN})`);
 }
 
 export function normalizeToolName(tool: string): ToolName {
   if ((tool as string) === "claude") return "claude-code";
   return tool as ToolName;
+}
+
+function countStoredEvents(sessionId: string): number {
+  return (db.prepare<[string], { count: number }>(
+    "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
+  ).get(sessionId) ?? { count: 0 }).count;
+}
+
+function seedPostHocSession(sessionId: string, data: PostHocSessionData): void {
+  const stampedMessages = data.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
+  const eventsToSeed = countStoredEvents(sessionId) === 0
+    ? data.events
+        .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
+        .filter((e): e is NonNullable<typeof e> => e !== null)
+        .map(e => ({ ...e, session_id: sessionId as UUID }))
+    : [];
+
+  seedBuffers(sessionId, stampedMessages, eventsToSeed);
 }
 
 // ─── signalSessionEnd ─────────────────────────────────────────────────────────
@@ -73,84 +109,34 @@ async function signalSessionEnd(
   // For Codex: read session data from its own storage (no MCP/hooks)
   if (tool === "codex") {
     const codexData = readCodexSession(cwd, sessionStartMs);
-    if (codexData) {
-      const stampedMessages = codexData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
-      const extractedEvents = codexData.events
-        .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
-        .filter((e): e is NonNullable<typeof e> => e !== null)
-        .map(e => ({ ...e, session_id: sessionId as UUID }));
-      seedBuffers(sessionId, stampedMessages, extractedEvents);
-    }
+    if (codexData) seedPostHocSession(sessionId, codexData);
   }
 
   // For Claude: read JSONL to fill in messages (MCP only captures tool events,
   // not conversation messages). Also fill in events if hooks captured nothing.
   if ((tool as string) === "claude") {
     const claudeData = readClaudeSession(cwd, sessionId, sessionStartMs);
-    if (claudeData) {
-      const eventCount = (db.prepare<[string], { count: number }>(
-        "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
-      ).get(sessionId) ?? { count: 0 }).count;
-
-      const eventsToSeed = eventCount === 0
-        ? claudeData.events
-            .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
-            .filter((e): e is NonNullable<typeof e> => e !== null)
-            .map(e => ({ ...e, session_id: sessionId as UUID }))
-        : [];
-
-      seedBuffers(sessionId, claudeData.messages, eventsToSeed);
-    }
+    if (claudeData) seedPostHocSession(sessionId, claudeData);
   }
 
   // For OpenCode: read its local SQLite store post-hoc.
   if (tool === "opencode") {
     const openCodeData = readOpenCodeSession(cwd, sessionStartMs);
-    if (openCodeData) {
-      const eventCount = (db.prepare<[string], { count: number }>(
-        "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
-      ).get(sessionId) ?? { count: 0 }).count;
-
-      const stampedMessages = openCodeData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
-      const eventsToSeed = eventCount === 0
-        ? openCodeData.events
-            .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
-            .filter((e): e is NonNullable<typeof e> => e !== null)
-            .map(e => ({ ...e, session_id: sessionId as UUID }))
-        : [];
-
-      seedBuffers(sessionId, stampedMessages, eventsToSeed);
-    }
+    if (openCodeData) seedPostHocSession(sessionId, openCodeData);
   }
 
   // For Gemini: read session JSONL post-hoc. Hooks may not fire in non-interactive
   // mode, so the post-session reader is the reliable data source.
   if (tool === "gemini") {
     const geminiData = readGeminiSession(cwd, sessionStartMs);
-    if (geminiData) {
-      const eventCount = (db.prepare<[string], { count: number }>(
-        "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
-      ).get(sessionId) ?? { count: 0 }).count;
-
-      const stampedMessages = geminiData.messages.map(m => ({ ...m, session_id: sessionId as UUID }));
-      const eventsToSeed = eventCount === 0
-        ? geminiData.events
-            .map(e => classifyToolEvent(e.tool, e.args, e.result, e.success))
-            .filter((e): e is NonNullable<typeof e> => e !== null)
-            .map(e => ({ ...e, session_id: sessionId as UUID }))
-        : [];
-
-      seedBuffers(sessionId, stampedMessages, eventsToSeed);
-    }
+    if (geminiData) seedPostHocSession(sessionId, geminiData);
   }
 
   // Minimum viable session guard: skip trivial sessions (no buffered data and very short)
   const session = getSessionById(sessionId as UUID);
   if (session) {
     const durationSeconds = Math.round((Date.now() - session.started_at) / 1000);
-    const eventCount = (db.prepare<[string], { count: number }>(
-      "SELECT COUNT(*) as count FROM events WHERE session_id = ?"
-    ).get(sessionId) ?? { count: 0 }).count;
+    const eventCount = countStoredEvents(sessionId);
     const hasBufferedData = getMessageBuffer(sessionId).length > 0 || getEventBuffer(sessionId).length > 0;
     if (!hasBufferedData && eventCount === 0 && durationSeconds < 30) {
       try { deleteSession(sessionId as UUID); } catch { /* best-effort */ }
@@ -171,7 +157,7 @@ async function signalSessionEnd(
 
 // ─── Context injection ────────────────────────────────────────────────────────
 
-const AGENTS_MD_HEADER = "<!-- llm-memory: auto-generated, do not edit -->\n";
+const AGENTS_MD_HEADER = "<!-- ctx-memory: auto-generated, do not edit -->\n";
 
 function injectMarkdownContext(filePath: string, projectId: string): void {
   const project = getProjectById(projectId as UUID);
@@ -181,8 +167,8 @@ function injectMarkdownContext(filePath: string, projectId: string): void {
   if (existsSync(filePath)) {
     const content = readFileSync(filePath, "utf8");
     if (content.startsWith(AGENTS_MD_HEADER)) {
-      const markerEnd = content.indexOf("\n<!-- /llm-memory -->");
-      existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /llm-memory -->".length) : "";
+      const markerEnd = content.indexOf("\n<!-- /ctx-memory -->");
+      existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /ctx-memory -->".length) : "";
     } else {
       existing = "\n" + content;
     }
@@ -192,7 +178,7 @@ function injectMarkdownContext(filePath: string, projectId: string): void {
     AGENTS_MD_HEADER +
     "# Project Memory (from previous sessions)\n\n" +
     project.memory_doc.trim() +
-    "\n<!-- /llm-memory -->" +
+    "\n<!-- /ctx-memory -->" +
     existing;
 
   writeFileSync(filePath, injected, "utf8");
@@ -247,6 +233,8 @@ export async function main(): Promise<void> {
   const sessionId = uuid();
   const sessionStartMs = Date.now();
 
+  process.env["CTX_MEMORY_SESSION_ID"] = sessionId;
+  process.env["CTX_MEMORY_PROJECT_ID"] = projectId;
   process.env["LLM_MEMORY_SESSION_ID"] = sessionId;
   process.env["LLM_MEMORY_PROJECT_ID"] = projectId;
 
@@ -271,10 +259,11 @@ export async function main(): Promise<void> {
   let finalToolArgs = toolArgs;
 
   if ((tool as string) === "claude") {
-    mcpConfigPath = join(homedir(), ".llm-memory", `session-${sessionId}.mcp.json`);
+    mkdirSync(join(homedir(), ".ctx-memory"), { recursive: true });
+    mcpConfigPath = join(homedir(), ".ctx-memory", `session-${sessionId}.mcp.json`);
     const mcpConfig = {
       mcpServers: {
-        "llm-memory": {
+        "ctx-memory": {
           command: process.execPath,
           args: [mcpScript],
         },
@@ -315,7 +304,7 @@ export async function main(): Promise<void> {
     try {
       await signalSessionEnd(sessionId, projectId, outcome, code, tool, cwd, sessionStartMs);
     } catch (e) {
-      console.error("[llm-memory] session end failed:", e);
+      console.error("[ctx-memory] session end failed:", e);
     }
     mcpProc?.kill();
     process.exit(code ?? 0);
@@ -330,7 +319,7 @@ const _isWrapperEntry = !_realArgv1.endsWith("/cli/index.js") && !_realArgv1.end
 
 if (!process.env["VITEST"] && _isWrapperEntry) {
   main().catch((e) => {
-    console.error("[llm-memory] wrapper fatal error:", e);
+    console.error("[ctx-memory] wrapper fatal error:", e);
     process.exit(1);
   });
 }

@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   const output = {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
-      additionalContext: `<llm-memory>\n${project.memory_doc}\n</llm-memory>`,
+      additionalContext: `<ctx-memory>\n${project.memory_doc}\n</ctx-memory>`,
     },
   };
 

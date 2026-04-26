@@ -55,20 +55,20 @@ beforeEach(() => {
 });
 
 describe("findRealBinary", () => {
-  it("skips ~/.llm-memory/bin/ entries to avoid infinite loop", () => {
-    // Only the llm-memory/bin path throws, others succeed
+  it("skips ~/.ctx-memory/bin/ entries to avoid infinite loop", () => {
+    // Only the ctx-memory/bin path throws, others succeed
     mockAccess.mockImplementation((p) => {
-      if (String(p).includes(".llm-memory/bin")) throw new Error("skip");
+      if (String(p).includes(".ctx-memory/bin")) throw new Error("skip");
       // first non-skipped path succeeds
     });
     const result = findRealBinary("claude", [
-      "/home/user/.llm-memory/bin",
+      "/home/user/.ctx-memory/bin",
       "/usr/local/bin",
     ]);
     expect(result).toBe("/usr/local/bin/claude");
   });
 
-  it("returns the first accessible binary not in llm-memory/bin", () => {
+  it("returns the first accessible binary not in ctx-memory/bin", () => {
     mockAccess.mockImplementation((p) => {
       if (String(p) !== "/usr/local/bin/claude") throw new Error("not found");
     });
@@ -76,7 +76,7 @@ describe("findRealBinary", () => {
     expect(result).toBe("/usr/local/bin/claude");
   });
 
-  it("throws when no accessible binary is found outside llm-memory/bin", () => {
+  it("throws when no accessible binary is found outside ctx-memory/bin", () => {
     mockAccess.mockImplementation(() => { throw new Error("not found"); });
     expect(() => findRealBinary("claude", ["/usr/local/bin"])).toThrow();
   });

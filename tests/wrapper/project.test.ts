@@ -86,10 +86,10 @@ describe("resolveProject — git root is grandparent (home-dir git repo)", () =>
   });
 
   it("uses git root when cwd is a direct subdir of git root", async () => {
-    // e.g. cwd is /home/ghadi/perso/llm-memory, git root is /home/ghadi/perso/llm-memory
-    setupGit("git@github.com:user/repo.git", "/home/ghadi/perso/llm-memory");
-    const result = await resolveProject("/home/ghadi/perso/llm-memory/src");
-    expect(result.path).toBe("/home/ghadi/perso/llm-memory");
+    // e.g. cwd is /home/ghadi/perso/ctx-memory, git root is /home/ghadi/perso/ctx-memory
+    setupGit("git@github.com:user/repo.git", "/home/ghadi/perso/ctx-memory");
+    const result = await resolveProject("/home/ghadi/perso/ctx-memory/src");
+    expect(result.path).toBe("/home/ghadi/perso/ctx-memory");
   });
 });
 

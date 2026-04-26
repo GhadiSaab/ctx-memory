@@ -4,7 +4,7 @@
 import Database, { type Database as DatabaseType } from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { homedir } from "os";
-import { mkdirSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 // ─── Path resolution ──────────────────────────────────────────────────────────
@@ -16,8 +16,13 @@ function resolveDbPath(raw: string): string {
   return raw;
 }
 
+const defaultDbPath = existsSync(resolveDbPath("~/.ctx-memory/store.db")) ||
+  !existsSync(resolveDbPath("~/.llm-memory/store.db"))
+  ? "~/.ctx-memory/store.db"
+  : "~/.llm-memory/store.db";
+
 const DB_PATH = resolveDbPath(
-  process.env["LLM_MEMORY_DB_PATH"] || "~/.llm-memory/store.db"
+  process.env["CTX_MEMORY_DB_PATH"] || process.env["LLM_MEMORY_DB_PATH"] || defaultDbPath
 );
 
 const DB_DIR = DB_PATH.lastIndexOf("/") > 0

@@ -31,7 +31,7 @@ export function processHookPayload(
     if (!event) return false;
 
     // Ensure session exists in DB — create it on the fly if missing (hook fired
-    // without the wrapper, e.g. claude launched directly not via llm-memory shim)
+    // without the wrapper, e.g. claude launched directly not via ctx-memory shim)
     if (!getSessionById(sessionId as UUID)) {
       const cwd = str(payload["cwd"] ?? process.cwd());
       const pathHash = createHash("sha256").update(cwd).digest("hex");

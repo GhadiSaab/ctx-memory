@@ -4,7 +4,7 @@
 //
 // Usage:
 //   node scripts/realworld-test.mjs
-//   node scripts/realworld-test.mjs --project llm-memory
+//   node scripts/realworld-test.mjs --project ctx-memory
 //   node scripts/realworld-test.mjs --verbose
 
 import { readdirSync, statSync, existsSync } from "node:fs";
@@ -52,7 +52,7 @@ function fail(label, detail) { return `  ${RED}✗${RESET} ${label}${detail ? ` 
 function warn(label, detail) { return `  ${YELLOW}~${RESET} ${label}${detail ? `  ${DIM}(${detail})${RESET}` : ""}`; }
 
 function decodeCwdFromDir(dirName) {
-  // -home-ghadi-perso-llm-memory → /home/ghadi/perso/llm-memory
+  // -home-ghadi-perso-ctx-memory → /home/ghadi/perso/ctx-memory
   if (!dirName.startsWith("-")) return null;
   return dirName.replace(/-/g, "/");
 }
@@ -188,7 +188,7 @@ const projectDirs = readdirSync(claudeProjectsDir)
   .map(d => ({ name: d, cwd: decodeCwdFromDir(d), dir: join(claudeProjectsDir, d) }))
   .filter(p => p.cwd !== null);
 
-console.log(`\n${BOLD}llm-memory real-world test${RESET}`);
+console.log(`\n${BOLD}ctx-memory real-world test${RESET}`);
 console.log(`${DIM}Running pipeline on real Claude JSONL sessions${RESET}\n`);
 
 let totalPassed = 0, totalFailed = 0, totalWarned = 0, totalSessions = 0;

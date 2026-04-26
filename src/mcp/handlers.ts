@@ -3,8 +3,7 @@
 
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
-import type { Message, UUID, ToolName } from "../types/index.js";
+import type { Message, Project, UUID, ToolName } from "../types/index.js";
 import {
   getProjectById,
   getProjectByPathHash,
@@ -21,7 +20,6 @@ import {
   getDigestBySession,
   searchByKeywords,
   getConfig,
-  createProject,
   getEventsBySession,
 } from "../db/index.js";
 import { classifyToolEvent } from "../layer1/events.js";
@@ -113,7 +111,7 @@ function err(message: string, code = "INTERNAL_ERROR") {
   return { error: message, code };
 }
 
-function resolveProjectRef(projectRef: string) {
+function resolveExistingProjectRef(projectRef: string): Project | null {
   let project = getProjectById(projectRef as UUID);
   if (project) return project;
 
@@ -121,12 +119,15 @@ function resolveProjectRef(projectRef: string) {
   project = getProjectByPathHash(pathHash);
   if (project) return project;
 
-  return createProject({
-    name: basename(projectRef),
-    path: projectRef,
-    git_remote: null,
-    path_hash: pathHash,
-  });
+  return getProjectByName(projectRef);
+}
+
+function projectRefFromInput(projectId: string | undefined): string {
+  return projectId ?? process.env["CTX_MEMORY_PROJECT_ID"] ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
+}
+
+function resolveInputProject(projectId: string | undefined): Project | null {
+  return resolveExistingProjectRef(projectRefFromInput(projectId));
 }
 
 // ─── store_message ────────────────────────────────────────────────────────────
@@ -158,7 +159,7 @@ export async function handleStoreMessage(input: unknown) {
       stored = true;
     } catch (e) {
       // Non-fatal — message still buffered for Layer 1
-      console.error("[llm-memory] store_message DB write failed:", e);
+      console.error("[ctx-memory] store_message DB write failed:", e);
     }
   }
 
@@ -185,7 +186,7 @@ export async function handleStoreEvent(input: unknown) {
     pushEvent(session_id, stamped);
     return { queued: true };
   } catch (e) {
-    console.error("[llm-memory] store_event classification failed:", e);
+    console.error("[ctx-memory] store_event classification failed:", e);
     return err(String(e));
   }
 }
@@ -196,17 +197,7 @@ export async function handleGetProjectMemory(input: unknown) {
   const parsed = GetProjectMemorySchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  // Resolve project_id: use arg, fall back to env var set by wrapper
-  const project_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
-  if (!project_id) return err("project_id required", "INVALID_INPUT");
-
-  // Try UUID → path-hash → name (agents often pass project name as project_id)
-  let project = getProjectById(project_id as UUID);
-  if (!project) {
-    const pathHash = createHash("sha256").update(project_id).digest("hex");
-    project = getProjectByPathHash(pathHash);
-  }
-  if (!project) project = getProjectByName(project_id);
+  const project = resolveInputProject(parsed.data.project_id);
   if (!project) return err("Project not found", "NOT_FOUND");
 
   return { memory_doc: project.memory_doc };
@@ -218,16 +209,8 @@ export async function handleListSessions(input: unknown) {
   const parsed = ListSessionsSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const raw_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
-  if (!raw_id) return err("project_id required", "INVALID_INPUT");
   const { limit } = parsed.data;
-
-  let project = getProjectById(raw_id as UUID);
-  if (!project) {
-    const pathHash = createHash("sha256").update(raw_id).digest("hex");
-    project = getProjectByPathHash(pathHash);
-  }
-  if (!project) project = getProjectByName(raw_id);
+  const project = resolveInputProject(parsed.data.project_id);
   if (!project) return err("Project not found", "NOT_FOUND");
 
   const sessions = getRecentSessionsByProject(project.id, limit);
@@ -249,16 +232,8 @@ export async function handleSearchContext(input: unknown) {
   const parsed = SearchContextSchema.safeParse(input);
   if (!parsed.success) return err(parsed.error.message, "INVALID_INPUT");
 
-  const raw_id = parsed.data.project_id ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? process.cwd();
-  if (!raw_id) return err("project_id required", "INVALID_INPUT");
   const { query, limit } = parsed.data;
-
-  let project = getProjectById(raw_id as UUID);
-  if (!project) {
-    const pathHash = createHash("sha256").update(raw_id).digest("hex");
-    project = getProjectByPathHash(pathHash);
-  }
-  if (!project) project = getProjectByName(raw_id);
+  const project = resolveInputProject(parsed.data.project_id);
   if (!project) return err("Project not found", "NOT_FOUND");
   const project_id = project.id;
 
@@ -321,14 +296,14 @@ export async function handleEndSession(input: unknown) {
       try {
         batchInsertMessages(messages);
       } catch (e) {
-        console.error("[llm-memory] message flush failed:", e);
+        console.error("[ctx-memory] message flush failed:", e);
       }
     }
     if (events.length > 0) {
       try {
         batchInsertEvents(events);
       } catch (e) {
-        console.error("[llm-memory] event flush failed:", e);
+        console.error("[ctx-memory] event flush failed:", e);
       }
     }
 
@@ -368,7 +343,7 @@ export async function handleEndSession(input: unknown) {
         storeEmbedding(session_id, vector);
       }
     } catch (e) {
-      console.error("[llm-memory] embedding failed (non-fatal):", e);
+      console.error("[ctx-memory] embedding failed (non-fatal):", e);
     }
 
     // 7. Layer 3 — project memory
@@ -392,7 +367,7 @@ export async function handleEndSession(input: unknown) {
         upsertMemoryDoc(project_id as UUID, updated.memory_doc);
       }
     } catch (e) {
-      console.error("[llm-memory] Layer 3 merge failed (non-fatal):", e);
+      console.error("[ctx-memory] Layer 3 merge failed (non-fatal):", e);
     }
 
     // 8. Clear buffers
@@ -401,7 +376,7 @@ export async function handleEndSession(input: unknown) {
 
     return { ok: true };
   } catch (e) {
-    console.error("[llm-memory] end_session failed:", e);
+    console.error("[ctx-memory] end_session failed:", e);
     return err(String(e));
   }
 }

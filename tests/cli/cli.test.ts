@@ -17,8 +17,7 @@ import {
 
 describe("detectInstalledTools", () => {
   it("returns only tools whose executables exist in PATH dirs", () => {
-    // Provide a mock PATH dir where only 'claude' (claude-code), 'gemini',
-    // and 'antigravity' exist.
+    // Provide a mock PATH dir where only 'claude' (claude-code) and 'gemini' exist.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "detect-"));
     fs.writeFileSync(path.join(tmpDir, "claude"), "", { mode: 0o755 });
     fs.writeFileSync(path.join(tmpDir, "gemini"), "", { mode: 0o755 });
@@ -69,7 +68,7 @@ describe("createWrapperSymlink", () => {
   });
 
   it("creates a symlink pointing at wrapperPath", () => {
-    const wrapperPath = "/usr/local/lib/llm-memory/wrapper-claude.sh";
+    const wrapperPath = "/usr/local/lib/ctx-memory/wrapper-claude.sh";
     createWrapperSymlink("claude", wrapperPath, tmpDir);
 
     const linkPath = path.join(tmpDir, "claude");
@@ -78,13 +77,22 @@ describe("createWrapperSymlink", () => {
   });
 
   it("is idempotent — calling twice does not throw and updates the symlink", () => {
-    const wrapperPath = "/usr/local/lib/llm-memory/wrapper-claude.sh";
+    const wrapperPath = "/usr/local/lib/ctx-memory/wrapper-claude.sh";
     createWrapperSymlink("claude", wrapperPath, tmpDir);
     // Call again — should overwrite, not throw.
     expect(() => createWrapperSymlink("claude", wrapperPath, tmpDir)).not.toThrow();
 
     const linkPath = path.join(tmpDir, "claude");
     expect(fs.readlinkSync(linkPath)).toBe(wrapperPath);
+  });
+
+  it("marks an existing wrapper target executable", () => {
+    const wrapperPath = path.join(tmpDir, "wrapper.js");
+    fs.writeFileSync(wrapperPath, "#!/usr/bin/env node\n", { mode: 0o644 });
+
+    createWrapperSymlink("claude", wrapperPath, tmpDir);
+
+    expect(fs.statSync(wrapperPath).mode & 0o111).not.toBe(0);
   });
 });
 
@@ -106,19 +114,19 @@ describe("injectPathLine", () => {
     const result = injectPathLine(tmpFile);
     expect(result).toBe(true);
     const content = fs.readFileSync(tmpFile, "utf8");
-    expect(content).toContain('export PATH="$HOME/.llm-memory/bin:$PATH"');
+    expect(content).toContain('export PATH="$HOME/.ctx-memory/bin:$PATH"');
   });
 
   it("returns false and does not duplicate when line already present", () => {
     fs.writeFileSync(
       tmpFile,
-      '# existing\nexport PATH="$HOME/.llm-memory/bin:$PATH"\n'
+      '# existing\nexport PATH="$HOME/.ctx-memory/bin:$PATH"\n'
     );
     const result = injectPathLine(tmpFile);
     expect(result).toBe(false);
     const content = fs.readFileSync(tmpFile, "utf8");
     const occurrences = (
-      content.match(/export PATH="\$HOME\/.llm-memory\/bin:\$PATH"/g) ?? []
+      content.match(/export PATH="\$HOME\/.ctx-memory\/bin:\$PATH"/g) ?? []
     ).length;
     expect(occurrences).toBe(1);
   });
@@ -129,7 +137,7 @@ describe("injectPathLine", () => {
     expect(result).toBe(true);
     expect(fs.existsSync(newFile)).toBe(true);
     expect(fs.readFileSync(newFile, "utf8")).toContain(
-      'export PATH="$HOME/.llm-memory/bin:$PATH"'
+      'export PATH="$HOME/.ctx-memory/bin:$PATH"'
     );
   });
 });

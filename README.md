@@ -1,8 +1,8 @@
-# llm-memory
+# ctx-memory
 
 Persistent memory for LLM coding agents — Claude Code, Codex, Gemini CLI, OpenCode.
 
-When you start a new session, the agent already knows what you worked on last time: decisions made, files touched, errors hit, conventions learned. No cloud. No telemetry. Everything lives in a local SQLite database at `~/.llm-memory/store.db`.
+When you start a new session, the agent already knows what you worked on last time: decisions made, files touched, errors hit, conventions learned. No cloud. No telemetry. Everything lives in a local SQLite database at `~/.ctx-memory/store.db`.
 
 ## How it works
 
@@ -29,33 +29,33 @@ Next session: agent reads prior context automatically
 ## Install
 
 ```bash
-npm install -g llm-memory
-llm-memory setup
+npm install -g ctx-memory
+ctx-memory setup
 ```
 
 The setup wizard:
 1. Detects which tools are installed (`claude`, `codex`, `gemini`, `opencode`)
 2. Asks which ones to integrate
 3. Writes hook configs for each tool
-4. Creates wrapper symlinks in `~/.llm-memory/bin/`
-5. Adds `~/.llm-memory/bin` to your PATH via `~/.bashrc` / `~/.zshrc`
+4. Creates wrapper symlinks in `~/.ctx-memory/bin/`
+5. Adds `~/.ctx-memory/bin` to your PATH via `~/.bashrc` / `~/.zshrc`
 
 Restart your shell (or `source ~/.bashrc`), then use your tools as normal — memory is automatic.
 
 ## Commands
 
 ```bash
-llm-memory setup                        # interactive setup wizard
-llm-memory status                       # show configuration and stats
-llm-memory projects list                # list all projects
-llm-memory projects show <name>         # print full memory doc for a project
-llm-memory projects forget <name>       # reset memory (keeps sessions)
-llm-memory projects forget <name> --hard  # delete all sessions + data
+ctx-memory setup                        # interactive setup wizard
+ctx-memory status                       # show configuration and stats
+ctx-memory projects list                # list all projects
+ctx-memory projects show <name>         # print full memory doc for a project
+ctx-memory projects forget <name>       # reset memory (keeps sessions)
+ctx-memory projects forget <name> --hard  # delete all sessions + data
 ```
 
 ## MCP server
 
-The MCP server runs as a sidecar alongside each tool session and exposes five tools:
+The MCP server runs as a sidecar alongside each tool session and exposes six tools:
 
 | Tool | Description |
 |---|---|
@@ -64,15 +64,16 @@ The MCP server runs as a sidecar alongside each tool session and exposes five to
 | `search_context` | Search past sessions by semantic similarity or keywords |
 | `get_project_memory` | Return the full project memory doc |
 | `list_sessions` | List recent sessions with goals and outcomes |
+| `end_session` | Finalize a session and run the Layer 1 → Layer 2 → Layer 3 pipeline |
 
 To use the MCP server standalone with Claude Code, add to `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
-    "llm-memory": {
+    "ctx-memory": {
       "command": "node",
-      "args": ["/path/to/llm-memory/dist/src/mcp/index.js"]
+      "args": ["/path/to/ctx-memory/dist/src/mcp/index.js"]
     }
   }
 }
@@ -103,11 +104,11 @@ src/
 ```bash
 npm run build       # tsc → dist/
 npm run dev         # tsc --watch
-npm run test:run    # vitest (single-shot, 456 tests)
+npm run test:run    # vitest (single-shot, 476+ tests)
 npm test            # vitest (watch mode)
 ```
 
-DB path defaults to `~/.llm-memory/store.db`. Override with `LLM_MEMORY_DB_PATH`.
+DB path defaults to `~/.ctx-memory/store.db`. Override with `CTX_MEMORY_DB_PATH`.
 
 ## License
 

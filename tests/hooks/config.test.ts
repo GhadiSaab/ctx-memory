@@ -20,7 +20,7 @@ import {
 
 let tmpDir: string;
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "llm-memory-hooks-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "ctx-memory-hooks-test-"));
 });
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
@@ -40,10 +40,10 @@ describe("buildClaudeHookConfig", () => {
     expect(hook.command).toContain("hook-receiver");
   });
 
-  it("hook command includes $LLM_MEMORY_SESSION_ID", () => {
+  it("hook command includes $CTX_MEMORY_SESSION_ID", () => {
     const config = buildClaudeHookConfig();
     const post = config.hooks.PostToolUse[0].hooks[0].command;
-    expect(post).toContain("$LLM_MEMORY_SESSION_ID");
+    expect(post).toContain("$CTX_MEMORY_SESSION_ID");
   });
 
   it("matcher is '*' (all tools)", () => {
@@ -69,16 +69,16 @@ describe("buildGeminiHookConfig", () => {
     expect(hook.command).toContain("hook-receiver");
   });
 
-  it("AfterTool hook includes $LLM_MEMORY_SESSION_ID", () => {
+  it("AfterTool hook includes $CTX_MEMORY_SESSION_ID", () => {
     const config = buildGeminiHookConfig();
     const hook = config.hooks.AfterTool[0].hooks[0];
-    expect(hook.command).toContain("$LLM_MEMORY_SESSION_ID");
+    expect(hook.command).toContain("$CTX_MEMORY_SESSION_ID");
   });
 
   it("AfterTool hook has a name and timeout", () => {
     const config = buildGeminiHookConfig();
     const hook = config.hooks.AfterTool[0].hooks[0];
-    expect(hook.name).toBe("llm-memory-after-tool");
+    expect(hook.name).toBe("ctx-memory-after-tool");
     expect(hook.timeout).toBeGreaterThan(0);
   });
 });
@@ -88,14 +88,14 @@ describe("buildGeminiHookConfig", () => {
 describe("buildOpenCodeHookConfig", () => {
   it("returns an OpenCode plugin path and content", () => {
     const config = buildOpenCodeHookConfig();
-    expect(config.pluginPath).toBe("plugins/llm-memory.js");
+    expect(config.pluginPath).toBe("plugins/ctx-memory.js");
     expect(config.content).toContain("tool.execute.after");
   });
 
   it("plugin content references hook-receiver", () => {
     const config = buildOpenCodeHookConfig();
     expect(config.content).toContain("hook-receiver");
-    expect(config.content).toContain("LLM_MEMORY_SESSION_ID");
+    expect(config.content).toContain("CTX_MEMORY_SESSION_ID");
   });
 });
 
@@ -176,7 +176,7 @@ describe("writeGeminiHooks", () => {
     const written = JSON.parse(readFileSync(join(tmpDir, "settings.json"), "utf8"));
     expect(written.hooks.AfterTool).toHaveLength(2);
     expect(written.hooks.AfterTool[0].hooks[0].command).toContain("gsd-context-monitor");
-    expect(written.hooks.AfterTool[1].hooks[0].name).toBe("llm-memory-after-tool");
+    expect(written.hooks.AfterTool[1].hooks[0].name).toBe("ctx-memory-after-tool");
   });
 
   it("is idempotent — running twice does not duplicate AfterTool entries", () => {
@@ -194,7 +194,7 @@ describe("writeOpenCodeHooks", () => {
   it("creates a global OpenCode plugin when it does not exist", () => {
     writeOpenCodeHooks(tmpDir);
 
-    const written = readFileSync(join(tmpDir, "plugins", "llm-memory.js"), "utf8");
+    const written = readFileSync(join(tmpDir, "plugins", "ctx-memory.js"), "utf8");
     expect(written).toContain("tool.execute.after");
     expect(written).toContain("hook-receiver");
   });
@@ -208,6 +208,6 @@ describe("writeOpenCodeHooks", () => {
     const written = JSON.parse(readFileSync(join(tmpDir, "opencode.json"), "utf8"));
     expect(written.provider).toBe("anthropic");
     expect(written.model).toBe("claude-3");
-    expect(readFileSync(join(tmpDir, "plugins", "llm-memory.js"), "utf8")).toContain("LLMMemoryPlugin");
+    expect(readFileSync(join(tmpDir, "plugins", "ctx-memory.js"), "utf8")).toContain("CTXMemoryPlugin");
   });
 });

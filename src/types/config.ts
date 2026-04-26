@@ -6,7 +6,7 @@ import type { UUID } from "./core.js";
 // ─── User config ──────────────────────────────────────────────────────────────
 
 export const ConfigSchema = z.object({
-  db_path: z.string().default("~/.llm-memory/memory.db"),
+  db_path: z.string().default("~/.ctx-memory/memory.db"),
   store_raw_messages: z.boolean().default(false),
   max_digest_tokens: z.number().int().positive().default(500),
   embedding_model: z.string().default("Xenova/all-MiniLM-L6-v2"),

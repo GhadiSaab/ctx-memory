@@ -1,6 +1,6 @@
 {
   "name": "ctx-memory",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Persistent memory layer for LLM coding agents (Claude Code, Codex, Gemini, OpenCode) — zero cloud, local SQLite + MCP",
   "type": "module",
   "keywords": [
@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "bin": {
-    "llm-memory": "./dist/src/cli/index.js"
+    "ctx-memory": "./dist/src/cli/index.js"
   },
   "scripts": {
     "prepare": "tsc -p tsconfig.build.json",

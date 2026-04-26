@@ -4,10 +4,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const RECEIVER = join(homedir(), ".llm-memory", "bin", "hook-receiver");
+const RECEIVER = join(homedir(), ".ctx-memory", "bin", "hook-receiver");
 
 const HOOK_CMD = (event: string) =>
-  `${RECEIVER} --event ${event} --session $LLM_MEMORY_SESSION_ID`;
+  `${RECEIVER} --event ${event} --session $CTX_MEMORY_SESSION_ID`;
 
 export interface GeminiHookEntry {
   name: string;
@@ -35,7 +35,7 @@ export function buildGeminiHookConfig(): GeminiHookConfig {
           matcher: ".*",
           hooks: [
             {
-              name: "llm-memory-after-tool",
+              name: "ctx-memory-after-tool",
               type: "command",
               command: HOOK_CMD("PostToolUse"),
               timeout: 5000,

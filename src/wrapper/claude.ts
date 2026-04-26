@@ -58,7 +58,7 @@ export function resolveProjectDir(cwd: string): string {
 /**
  * Find and read the Claude session file for the given cwd that was created
  * at or after sessionStartMs. Claude names its files by its own internal
- * session UUID (not our LLM_MEMORY_SESSION_ID), so we match by directory + mtime.
+ * session UUID (not our CTX_MEMORY_SESSION_ID), so we match by directory + mtime.
  */
 export function readClaudeSession(
   cwd: string,

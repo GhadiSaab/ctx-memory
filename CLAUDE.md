@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A fully local CLI tool giving coding agents (Claude Code, Codex, Gemini CLI, OpenCode) persistent memory across sessions. When a new session starts in a project, the agent automatically knows what was worked on before, what decisions were made, what errors were hit, and what files were touched — without re-explaining anything. Zero cloud, zero telemetry. Everything lives in `~/.llm-memory/store.db`.
+A fully local CLI tool giving coding agents (Claude Code, Codex, Gemini CLI, OpenCode) persistent memory across sessions. When a new session starts in a project, the agent automatically knows what was worked on before, what decisions were made, what errors were hit, and what files were touched — without re-explaining anything. Zero cloud, zero telemetry. Everything lives in `~/.ctx-memory/store.db`.
 
 **End-to-end flow:**
 1. Shell wrapper intercepts `claude` (or codex/gemini/opencode), detects project via git remote/path, sets env vars, spawns real agent as child process
@@ -54,10 +54,10 @@ npm run test:run     # vitest run (CI/single-shot)
 npx vitest run tests/layer1/structural.test.ts
 
 # Run MCP server
-npm run mcp          # node dist/mcp/index.js
+npm run mcp          # node dist/src/mcp/index.js
 ```
 
-The DB path defaults to `~/.llm-memory/store.db` and can be overridden with `LLM_MEMORY_DB_PATH`.
+The DB path defaults to `~/.ctx-memory/store.db` and can be overridden with `CTX_MEMORY_DB_PATH`.
 
 ## Live E2E Testing
 
@@ -65,21 +65,21 @@ The preferred way to validate changes is live real-time testing — run an actua
 
 ```bash
 # Test project (isolated, has git remote)
-cd /tmp/llm-memory-livetest
+cd /tmp/ctx-memory-livetest
 
 # Claude — verify MCP tools are connected
-~/.llm-memory/bin/claude -p "List all MCP tools from the llm-memory server. If none, say MCP NOT CONNECTED."
+~/.ctx-memory/bin/claude -p "List all MCP tools from the ctx-memory server. If none, say MCP NOT CONNECTED."
 
 # Claude — verify context injection (prior sessions visible)
-~/.llm-memory/bin/claude -p "What do you know about this project from previous sessions? List everything from your memory context."
+~/.ctx-memory/bin/claude -p "What do you know about this project from previous sessions? List everything from your memory context."
 
 # Codex — verify MCP tools are connected
-~/.llm-memory/bin/codex exec "List all MCP tools from the llm-memory server. If none, say MCP NOT CONNECTED."
+~/.ctx-memory/bin/codex exec "List all MCP tools from the ctx-memory server. If none, say MCP NOT CONNECTED."
 
 # Check DB after a session
-sqlite3 ~/.llm-memory/store.db "SELECT id, tool, outcome FROM sessions ORDER BY started_at DESC LIMIT 5;"
-sqlite3 ~/.llm-memory/store.db "SELECT content FROM messages_raw ORDER BY rowid DESC LIMIT 5;"
-sqlite3 ~/.llm-memory/store.db "SELECT substr(summary,1,100) FROM digests ORDER BY rowid DESC LIMIT 3;"
+sqlite3 ~/.ctx-memory/store.db "SELECT id, tool, outcome FROM sessions ORDER BY started_at DESC LIMIT 5;"
+sqlite3 ~/.ctx-memory/store.db "SELECT content FROM messages_raw ORDER BY rowid DESC LIMIT 5;"
+sqlite3 ~/.ctx-memory/store.db "SELECT substr(summary,1,100) FROM digests ORDER BY rowid DESC LIMIT 3;"
 ```
 
 After every code change: build (`npm run build`), then run the relevant live test above before committing.

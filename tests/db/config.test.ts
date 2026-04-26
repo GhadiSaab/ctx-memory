@@ -6,7 +6,7 @@ beforeEach(clearDb);
 
 describe("getConfigValue", () => {
   it("returns the schema default when the key has never been set", () => {
-    expect(getConfigValue("db_path")).toBe("~/.llm-memory/memory.db");
+    expect(getConfigValue("db_path")).toBe("~/.ctx-memory/memory.db");
     expect(getConfigValue("store_raw_messages")).toBe(false);
     expect(getConfigValue("max_digest_tokens")).toBe(500);
     expect(getConfigValue("embedding_model")).toBe("Xenova/all-MiniLM-L6-v2");
@@ -49,7 +49,7 @@ describe("setConfigValue", () => {
 describe("getConfig", () => {
   it("returns defaults for all keys when config table is empty", () => {
     const config = getConfig();
-    expect(config.db_path).toBe("~/.llm-memory/memory.db");
+    expect(config.db_path).toBe("~/.ctx-memory/memory.db");
     expect(config.store_raw_messages).toBe(false);
     expect(config.max_digest_tokens).toBe(500);
     expect(config.embedding_model).toBe("Xenova/all-MiniLM-L6-v2");

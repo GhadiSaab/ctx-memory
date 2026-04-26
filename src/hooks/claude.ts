@@ -4,11 +4,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const RECEIVER = join(homedir(), ".llm-memory", "bin", "hook-receiver");
-const SESSION_START = join(homedir(), ".llm-memory", "bin", "session-start");
+const RECEIVER = join(homedir(), ".ctx-memory", "bin", "hook-receiver");
+const SESSION_START = join(homedir(), ".ctx-memory", "bin", "session-start");
 
 const HOOK_CMD = (event: string) =>
-  `${RECEIVER} --event ${event} --session $LLM_MEMORY_SESSION_ID`;
+  `${RECEIVER} --event ${event} --session $CTX_MEMORY_SESSION_ID`;
 
 export interface ClaudeHookConfig {
   hooks: {

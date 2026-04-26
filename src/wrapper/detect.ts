@@ -2,18 +2,23 @@
 // Reads process.argv[1] basename — must be a known tool name.
 
 import { basename } from "node:path";
-import type { ToolName } from "../types/index.js";
 
-const KNOWN_TOOLS: ReadonlySet<string> = new Set(["claude", "codex", "gemini", "opencode"]);
+export type WrapperToolName = "claude" | "codex" | "gemini" | "opencode";
 
-export function detectTool(): ToolName {
+const KNOWN_TOOLS = new Set<WrapperToolName>(["claude", "codex", "gemini", "opencode"]);
+
+function isWrapperToolName(value: string): value is WrapperToolName {
+  return KNOWN_TOOLS.has(value as WrapperToolName);
+}
+
+export function detectTool(): WrapperToolName {
   const script = process.argv[1];
-  if (!script) throw new Error("[llm-memory] Cannot detect tool: process.argv[1] is undefined");
+  if (!script) throw new Error("[ctx-memory] Cannot detect tool: process.argv[1] is undefined");
 
   const name = basename(script);
-  if (!KNOWN_TOOLS.has(name)) {
-    throw new Error(`[llm-memory] Unknown tool '${name}' — wrapper only supports: ${[...KNOWN_TOOLS].join(", ")}`);
+  if (!isWrapperToolName(name)) {
+    throw new Error(`[ctx-memory] Unknown tool '${name}' — wrapper only supports: ${[...KNOWN_TOOLS].join(", ")}`);
   }
 
-  return name as ToolName;
+  return name;
 }
