@@ -4,7 +4,7 @@ import {
   serializeMemory,
   deserializeMemory,
 } from "../../src/layer3/memory.js";
-import type { ProjectMemory, Layer2Digest } from "../../src/types/index.js";
+import type { ProjectMemory, Layer2Digest, ExtractedFact, DecisionCategory, FactDurability } from "../../src/types/index.js";
 
 // ─── Factories ────────────────────────────────────────────────────────────────
 
@@ -32,11 +32,27 @@ function makeDigest(overrides: Partial<Layer2Digest> = {}): Layer2Digest {
     decisions: [],
     errors_encountered: [],
     validation: [],
+    facts: [],
     outcome: "completed",
     keywords: ["authentication", "middleware"],
     estimated_tokens: 100,
     created_at: Date.now() as any,
     ...overrides,
+  };
+}
+
+function decisionFact(
+  text: string,
+  category: DecisionCategory,
+  durability: FactDurability = "project"
+): Extract<ExtractedFact, { kind: "decision" }> {
+  return {
+    kind: "decision",
+    text,
+    source: "assistant_message",
+    confidence: 0.8,
+    durability,
+    category,
   };
 }
 
@@ -94,6 +110,22 @@ describe("mergeIntoProjectMemory — recent_work", () => {
         summary: "what mcps do you have",
         files_modified: [],
         decisions: [],
+        errors_encountered: [],
+        validation: [],
+      }),
+      "sid-1"
+    );
+    expect(result.recent_work).toHaveLength(0);
+  });
+
+  it("skips recent_work entries for transient memory lookup sessions", () => {
+    const result = mergeIntoProjectMemory(
+      makeMemory(),
+      makeDigest({
+        goal: "use llm memory mcp",
+        summary: "use llm memory mcp. I'll use the llm-memory_get_project_memory MCP tool to retrieve the project memory.",
+        files_modified: [],
+        decisions: ["I'll use the llm-memory_get_project_memory MCP tool to retrieve the project memory."],
         errors_encountered: [],
         validation: [],
       }),
@@ -247,15 +279,14 @@ describe("mergeIntoProjectMemory — known_issues", () => {
 
 describe("mergeIntoProjectMemory — conventions", () => {
   it("appends new decisions as conventions (non-architecture decisions)", () => {
-    // "Add error handling" has no tech/arch signals — goes to conventions
-    const digest = makeDigest({ decisions: ["Add error handling everywhere"] });
+    const digest = makeDigest({ facts: [decisionFact("Keep commits atomic", "convention")] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
-    expect(result.conventions).toContain("Add error handling everywhere");
+    expect(result.conventions).toContain("Keep commits atomic");
   });
 
   it("does not duplicate existing conventions (exact match)", () => {
     const existing = makeMemory({ conventions: ["Add error handling everywhere"] });
-    const digest = makeDigest({ decisions: ["Add error handling everywhere"] });
+    const digest = makeDigest({ facts: [decisionFact("Add error handling everywhere", "convention")] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
     expect(result.conventions.filter((c) => c === "Add error handling everywhere")).toHaveLength(1);
   });
@@ -264,7 +295,7 @@ describe("mergeIntoProjectMemory — conventions", () => {
     const existing = makeMemory({
       conventions: Array.from({ length: 20 }, (_, i) => `Convention ${i}`),
     });
-    const digest = makeDigest({ decisions: ["New convention"] });
+    const digest = makeDigest({ facts: [decisionFact("New convention", "convention")] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
     expect(result.conventions).toHaveLength(20);
     expect(result.conventions).toContain("New convention");
@@ -272,8 +303,7 @@ describe("mergeIntoProjectMemory — conventions", () => {
 
   it("preserves existing conventions not in the new digest", () => {
     const existing = makeMemory({ conventions: ["Always write tests first"] });
-    // "Keep commits atomic" has no tech/arch signals — goes to conventions
-    const digest = makeDigest({ decisions: ["Keep commits atomic"] });
+    const digest = makeDigest({ facts: [decisionFact("Keep commits atomic", "convention")] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
     expect(result.conventions).toContain("Always write tests first");
     expect(result.conventions).toContain("Keep commits atomic");
@@ -290,20 +320,20 @@ describe("mergeIntoProjectMemory — conventions", () => {
 
 describe("mergeIntoProjectMemory — architecture", () => {
   it("appends architecture-note decisions (containing 'use', 'with', 'instead', 'switched')", () => {
-    const digest = makeDigest({ decisions: ["Use Postgres instead of SQLite"] });
+    const digest = makeDigest({ facts: [decisionFact("Use Postgres instead of SQLite", "architecture")] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.architecture).toContain("Use Postgres instead of SQLite");
   });
 
   it("does not append decisions without architecture keywords", () => {
-    const digest = makeDigest({ decisions: ["Add error handling"] });
+    const digest = makeDigest({ decisions: ["Use Postgres instead of SQLite"] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
-    expect(result.architecture).not.toContain("Add error handling");
+    expect(result.architecture).not.toContain("Use Postgres instead of SQLite");
   });
 
   it("does not duplicate existing architecture notes", () => {
     const existing = makeMemory({ architecture: "Use Postgres instead of SQLite" });
-    const digest = makeDigest({ decisions: ["Use Postgres instead of SQLite"] });
+    const digest = makeDigest({ facts: [decisionFact("Use Postgres instead of SQLite", "architecture")] });
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
     const occurrences = result.architecture
       .split("\n")
@@ -313,7 +343,10 @@ describe("mergeIntoProjectMemory — architecture", () => {
 
   it("appends multiple architecture notes newline-separated", () => {
     const digest = makeDigest({
-      decisions: ["Use Redis with sessions", "Switched from REST to GraphQL"],
+      facts: [
+        decisionFact("Use Redis with sessions", "architecture"),
+        decisionFact("Switched from REST to GraphQL", "architecture"),
+      ],
     });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     const lines = result.architecture.split("\n").filter(Boolean);
@@ -322,7 +355,7 @@ describe("mergeIntoProjectMemory — architecture", () => {
   });
 
   it("is case-insensitive for architecture keyword detection", () => {
-    const digest = makeDigest({ decisions: ["SWITCHED to using bun instead of node"] });
+    const digest = makeDigest({ facts: [decisionFact("SWITCHED to using bun instead of node", "architecture")] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.architecture).toContain("SWITCHED to using bun instead of node");
   });
@@ -331,6 +364,14 @@ describe("mergeIntoProjectMemory — architecture", () => {
     const digest = makeDigest({ decisions: ["I'll use the MCP tool to store that message."] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.architecture).not.toContain("I'll use the MCP tool to store that message.");
+  });
+
+  it("rejects assistant acknowledgements even when they contain architecture words", () => {
+    const digest = makeDigest({
+      decisions: ["Got it. This is the llm-memory project itself, backed by SQLite and exposed via MCP."],
+    });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.architecture).toBe("");
   });
 });
 
@@ -341,7 +382,7 @@ describe("mergeIntoProjectMemory — how_to_test", () => {
     const digest = makeDigest({ validation: ["npm run build passed", "npm test failed"] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.how_to_test).toContain("npm run build");
-    expect(result.how_to_test).toContain("npm test");
+    expect(result.how_to_test).not.toContain("npm test");
   });
 
   it("deduplicates validation commands", () => {

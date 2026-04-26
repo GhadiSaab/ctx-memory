@@ -14,13 +14,16 @@ const STOPWORDS = new Set([
   "up", "out", "now", "then", "when", "how", "who", "which", "there",
   "here", "about", "into", "over", "after", "before", "just", "also",
   "more", "some", "any", "no", "yes", "get", "got", "let", "go",
-  "see", "one", "two", "use", "used",
+  "see", "one", "two", "use", "used", "need", "needs", "needed",
+  "now", "next", "update", "add", "fix", "cover",
   // Common code words
   "function", "const", "return", "class", "import", "export", "default",
   "type", "interface", "new", "var", "let", "null", "undefined", "true",
   "false", "void", "async", "await", "try", "catch", "throw", "else",
   "case", "break", "continue", "switch", "while", "typeof", "instanceof",
 ]);
+
+const NOISE_LINE_RE = /\b(now i need|now let me|let me|also add a test|base directory for this skill|i'?ll update|i need to update)\b/i;
 
 // ─── Preprocessing ────────────────────────────────────────────────────────────
 
@@ -44,7 +47,8 @@ export function extractKeywords(
   topN = 15
 ): string[] {
   const docs = messages
-    .filter((m) => m.weight > 0.5)
+    .filter((m, index) => m.weight > 0.25 || m.type !== "noise" || index === 0)
+    .filter((m) => !NOISE_LINE_RE.test(m.message.content))
     .map((m) => tokenize(m.message.content));
 
   const totalDocs = docs.length;
@@ -67,7 +71,8 @@ export function extractKeywords(
 
     for (const [term, count] of termCount) {
       const tf = count / tokens.length;
-      const idf = Math.log(totalDocs / (docFreq.get(term) ?? 1));
+      const df = docFreq.get(term) ?? 0;
+      const idf = df === totalDocs ? 0.1 : Math.log((totalDocs + 1) / (df + 1)) + 1;
       scores.set(term, (scores.get(term) ?? 0) + tf * idf);
     }
   }

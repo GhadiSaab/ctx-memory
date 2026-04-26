@@ -92,6 +92,7 @@ db.exec(`
     decisions          TEXT NOT NULL DEFAULT '[]',
     errors_encountered TEXT NOT NULL DEFAULT '[]',
     validation         TEXT NOT NULL DEFAULT '[]',
+    facts              TEXT NOT NULL DEFAULT '[]',
     outcome            TEXT,
     keywords           TEXT NOT NULL DEFAULT '[]',
     estimated_tokens   INTEGER NOT NULL,
@@ -142,6 +143,9 @@ if (!digestColumnNames.has("summary")) {
 }
 if (!digestColumnNames.has("validation")) {
   db.exec("ALTER TABLE digests ADD COLUMN validation TEXT NOT NULL DEFAULT '[]'");
+}
+if (!digestColumnNames.has("facts")) {
+  db.exec("ALTER TABLE digests ADD COLUMN facts TEXT NOT NULL DEFAULT '[]'");
 }
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────

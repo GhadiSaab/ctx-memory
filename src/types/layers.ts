@@ -4,12 +4,63 @@ import type { UUID, UnixMs, SessionOutcome } from "./core.js";
 import type { WeightedMessage, ConversationPattern } from "./messages.js";
 import type { ExtractedEvent } from "./events.js";
 
+export type FactKind = "goal" | "decision" | "issue" | "work" | "validation" | "keyword";
+export type FactSource = "user_message" | "assistant_message" | "tool_event" | "code_event";
+export type FactDurability = "transient" | "session" | "project";
+export type DecisionCategory = "architecture" | "convention" | "implementation";
+export type IssueStatus = "open" | "resolved" | "transient";
+
+export interface BaseFact {
+  kind: FactKind;
+  text: string;
+  source: FactSource;
+  sourceIndex?: number;
+  confidence: number;
+  durability: FactDurability;
+}
+
+export interface GoalFact extends BaseFact {
+  kind: "goal";
+}
+
+export interface DecisionFact extends BaseFact {
+  kind: "decision";
+  category: DecisionCategory;
+}
+
+export interface IssueFact extends BaseFact {
+  kind: "issue";
+  status: IssueStatus;
+  evidence?: string;
+}
+
+export interface WorkFact extends BaseFact {
+  kind: "work";
+}
+
+export interface ValidationFact extends BaseFact {
+  kind: "validation";
+}
+
+export interface KeywordFact extends BaseFact {
+  kind: "keyword";
+}
+
+export type ExtractedFact =
+  | GoalFact
+  | DecisionFact
+  | IssueFact
+  | WorkFact
+  | ValidationFact
+  | KeywordFact;
+
 // ─── Layer 1 → Layer 2 contract (never stored) ───────────────────────────────
 
 /** Everything Layer 1 produces; consumed by Layer 2 to build the digest. */
 export interface Layer1Output {
   session_id: UUID;
   goal: string | null;
+  facts: ExtractedFact[];
   weightedMessages: WeightedMessage[];
   events: ExtractedEvent[];
   decisions: string[];
@@ -31,6 +82,7 @@ export interface Layer2Digest {
   decisions: string[];
   errors_encountered: string[];
   validation: string[];
+  facts: ExtractedFact[];
   outcome: SessionOutcome | null;
   keywords: string[];
   estimated_tokens: number;           // must stay under 500

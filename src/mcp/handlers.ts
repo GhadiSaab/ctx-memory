@@ -326,6 +326,7 @@ export async function handleEndSession(input: unknown) {
       decisions: digest.decisions,
       errors_encountered: digest.errors_encountered,
       validation: digest.validation,
+      facts: digest.facts,
       outcome: digest.outcome,
       keywords: digest.keywords,
       estimated_tokens: digest.estimated_tokens,

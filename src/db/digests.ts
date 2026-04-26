@@ -12,6 +12,7 @@ interface DigestRow {
   decisions: string;          // JSON
   errors_encountered: string; // JSON
   validation: string;         // JSON
+  facts: string;              // JSON
   outcome: string | null;
   keywords: string;           // JSON
   estimated_tokens: number;
@@ -28,6 +29,7 @@ function rowToDigest(row: DigestRow): Layer2Digest {
     decisions: JSON.parse(row.decisions) as string[],
     errors_encountered: JSON.parse(row.errors_encountered) as string[],
     validation: JSON.parse(row.validation) as string[],
+    facts: JSON.parse(row.facts) as Layer2Digest["facts"],
     outcome: row.outcome as SessionOutcome | null,
     keywords: JSON.parse(row.keywords) as string[],
     estimated_tokens: row.estimated_tokens,
@@ -40,10 +42,10 @@ function rowToDigest(row: DigestRow): Layer2Digest {
 const stmtInsert = db.prepare(`
   INSERT INTO digests
     (id, session_id, goal, summary, files_modified, decisions, errors_encountered,
-     validation, outcome, keywords, estimated_tokens, created_at)
+     validation, facts, outcome, keywords, estimated_tokens, created_at)
   VALUES
     (@id, @session_id, @goal, @summary, @files_modified, @decisions, @errors_encountered,
-     @validation, @outcome, @keywords, @estimated_tokens, @created_at)
+     @validation, @facts, @outcome, @keywords, @estimated_tokens, @created_at)
 `);
 
 const stmtFindBySession = db.prepare<[string], DigestRow>(`
@@ -61,8 +63,8 @@ const stmtFindRecentByProject = db.prepare<[string, number], DigestRow>(`
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export function writeDigest(
-  fields: Omit<Layer2Digest, "id" | "created_at" | "summary" | "validation"> &
-    Partial<Pick<Layer2Digest, "summary" | "validation">>
+  fields: Omit<Layer2Digest, "id" | "created_at" | "summary" | "validation" | "facts"> &
+    Partial<Pick<Layer2Digest, "summary" | "validation" | "facts">>
 ): Layer2Digest {
   const row: DigestRow = {
     id: crypto.randomUUID(),
@@ -73,6 +75,7 @@ export function writeDigest(
     decisions: JSON.stringify(fields.decisions),
     errors_encountered: JSON.stringify(fields.errors_encountered),
     validation: JSON.stringify(fields.validation ?? []),
+    facts: JSON.stringify(fields.facts ?? []),
     outcome: fields.outcome,
     keywords: JSON.stringify(fields.keywords),
     estimated_tokens: fields.estimated_tokens,

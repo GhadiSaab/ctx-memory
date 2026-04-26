@@ -180,6 +180,33 @@ describe("processSession — decisions", () => {
     const out = processSession(messages, []);
     expect(Array.isArray(out.decisions)).toBe(true);
   });
+
+  it("extracts durable architecture decisions from assistant messages", () => {
+    const messages = [
+      msg("user", "How should we persist memory?"),
+      msg("assistant", "The architecture uses SQLite with sqlite-vec for local storage. I will update the docs next."),
+    ];
+    const out = processSession(messages, []);
+    expect(out.decisions).toContain("The architecture uses SQLite with sqlite-vec for local storage.");
+  });
+
+  it("does not treat transient MCP lookup narration as a decision", () => {
+    const messages = [
+      msg("user", "use llm memory mcp"),
+      msg("assistant", "I'll use the llm-memory_get_project_memory MCP tool to retrieve the project memory."),
+    ];
+    const out = processSession(messages, []);
+    expect(out.decisions).toEqual([]);
+  });
+
+  it("does not treat failure explanations as decisions because they contain 'because'", () => {
+    const messages = [
+      msg("user", "why is the digest bad?"),
+      msg("assistant", "The build failed because decisions and errors arrays were empty in real sessions."),
+    ];
+    const out = processSession(messages, []);
+    expect(out.decisions).toEqual([]);
+  });
 });
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -203,6 +230,15 @@ describe("processSession — errors", () => {
     ];
     const out = processSession(messages, events);
     expect(out.errors.some((e) => e.includes("No such file"))).toBe(true);
+  });
+
+  it("does not treat assistant diagnostic narration as an error without failed tool evidence", () => {
+    const messages = [
+      msg("user", "run the tests"),
+      msg("assistant", "The build failed because TypeScript cannot find module './missing'. I will fix the import."),
+    ];
+    const out = processSession(messages, []);
+    expect(out.errors).toEqual([]);
   });
 });
 

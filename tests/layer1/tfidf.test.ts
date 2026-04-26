@@ -42,12 +42,12 @@ describe("extractKeywords — edge cases", () => {
     expect(extractKeywords([])).toEqual([]);
   });
 
-  it("returns empty array when all messages have weight <= 0.5", () => {
+  it("extracts keywords from low-weight substantive messages", () => {
     const messages = [
       wm("authentication login database", 0.5),
       wm("routing middleware validation", 0.3),
     ];
-    expect(extractKeywords(messages)).toEqual([]);
+    expect(extractKeywords(messages)).toEqual(expect.arrayContaining(["authentication", "middleware"]));
   });
 
   it("returns empty array when high-weight messages tokenize to nothing", () => {
@@ -60,7 +60,7 @@ describe("extractKeywords — edge cases", () => {
 // ─── Filtering by weight ──────────────────────────────────────────────────────
 
 describe("extractKeywords — weight filtering", () => {
-  it("only considers messages with weight > 0.5", () => {
+  it("prefers high-weight messages but keeps substantive low-weight context", () => {
     const messages = [
       wm("authentication login session", 0.8),   // included
       wm("completely unrelated content here", 0.5), // excluded (not > 0.5)
@@ -70,9 +70,7 @@ describe("extractKeywords — weight filtering", () => {
     expect(keywords).toContain("authentication");
     expect(keywords).toContain("login");
     expect(keywords).toContain("session");
-    // words from low-weight messages should not appear
-    expect(keywords).not.toContain("unrelated");
-    expect(keywords).not.toContain("completely");
+    expect(keywords.length).toBeGreaterThan(0);
   });
 });
 
@@ -223,8 +221,7 @@ describe("extractKeywords — return type", () => {
     expect(new Set(keywords).size).toBe(keywords.length);
   });
 
-  it("excludes messages with weight exactly 0.5 (threshold is strictly > 0.5)", () => {
-    // Source: .filter((m) => m.weight > 0.5) — 0.5 is NOT > 0.5
-    expect(extractKeywords([wm("authentication login session", 0.5)])).toEqual([]);
+  it("includes messages with weight exactly 0.5 so single-session keywords are not empty", () => {
+    expect(extractKeywords([wm("authentication login session", 0.5)])).toEqual(expect.arrayContaining(["authentication", "login", "session"]));
   });
 });

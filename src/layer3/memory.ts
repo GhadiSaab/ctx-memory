@@ -4,45 +4,141 @@
 import type { Layer2Digest, ProjectMemory, KnownIssue, RecentWorkEntry } from "../types/index.js";
 import { randomUUID } from "node:crypto";
 
-// ─── Architecture keyword detection ───────────────────────────────────────────
+// ─── Promotion policy ────────────────────────────────────────────────────────
 
-// Architecture notes describe durable stack/design facts, not transient plans.
-const ARCH_SIGNALS = [
-  "we use ", "uses ", "is backed by ", "is stored ", "stored at ",
-  "registered in ", "reads ", "writes ", "resolves ", "switched to ", "chose ",
-  "the architecture", "the stack", "the design",
-  "instead of ", "rather than ",
-  "react", "vue", "angular", "next", "svelte",
-  "node", "deno", "bun", "python", "go ", "rust", "java",
-  "postgres", "mysql", "sqlite", "mongodb", "redis",
-  "graphql", "rest", "grpc", "websocket",
-  "docker", "kubernetes", "terraform",
-  "typescript", "javascript", "tailwind", "prisma",
-];
+// Layer 3 is deliberately conservative: it promotes typed facts produced by
+// Layer 1/2 instead of re-classifying arbitrary digest strings. Compatibility
+// fields such as digest.decisions remain useful for summaries, but they are not
+// trusted as project memory unless a fact carries durable provenance.
 
-const TRANSIENT_DECISION_PREFIX = /^(i('|’)ll|i will|i('|’)m|we('|’)ll|we will|let('|’)s|use the|maybe|please|can you|help me|i want|i need)\b/i;
-
-function isArchitectureNote(decision: string): boolean {
-  const trimmed = decision.trim();
-  const lower = trimmed.toLowerCase();
-  if (trimmed.length < 12 || trimmed.length > 220) return false;
-  if (TRANSIENT_DECISION_PREFIX.test(trimmed)) return false;
-  if (lower.includes("mcp tool") || lower.includes("subagent-driven approach")) return false;
-  return ARCH_SIGNALS.some((kw) => lower.includes(kw));
-}
+const TRANSIENT_DECISION_PREFIX = /^(got it|i('|’)ll|i will|i('|’)m|i am|we('|’)ll|we will|let('|’)s|use the|maybe|please|can you|help me|i want|i need|now|next)\b/i;
+const TRANSIENT_MEMORY_RE = /\b(?:mcp tool|get_project_memory|retrieve the project memory|store that message|use llm memory|get memory mcp|have the context)\b/i;
+const TEST_COMMAND_FILTER_RE = /(?:2>&1|\|\s*(?:tail|head)\b|--runInBand\b|--watch=false\b)\s*(?:-\d+|\d+)?/g;
+const TEST_RESULT_RE = /\s+(passed|failed)$/i;
 
 function isUsefulConvention(decision: string): boolean {
   const trimmed = decision.trim();
   if (trimmed.length < 8 || trimmed.length > 220) return false;
-  return !TRANSIENT_DECISION_PREFIX.test(trimmed);
+  return !TRANSIENT_DECISION_PREFIX.test(trimmed) && !TRANSIENT_MEMORY_RE.test(trimmed);
+}
+
+function isUsefulRecentSummary(summary: string, digest: Layer2Digest): boolean {
+  const trimmed = summary.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length < 6 || trimmed.length > 280) return false;
+  if (TRANSIENT_MEMORY_RE.test(trimmed)) return false;
+  if (/^(what mcps do you have|no goal detected)$/i.test(trimmed)) return false;
+  if (digest.files_modified.length === 0 && digest.validation.length === 0 && digest.errors_encountered.length === 0) {
+    const goal = digest.goal?.trim().toLowerCase();
+    if (goal && goal === lower) return false;
+  }
+  return true;
+}
+
+function cleanIssueDescription(error: string): string | null {
+  const cleaned = error.replace(/\s+/g, " ").trim();
+  if (cleaned.length < 8) return null;
+  if (TRANSIENT_MEMORY_RE.test(cleaned)) return null;
+  return cleaned.length > 220 ? cleaned.slice(0, 219).trimEnd() + "…" : cleaned;
 }
 
 function validationCommand(note: string): string | null {
   const trimmed = note.trim();
   const match = trimmed.match(/^(.+?)\s+(passed|failed)$/i);
-  const command = (match ? match[1] : trimmed).trim();
+  if (match?.[2]?.toLowerCase() !== "passed") return null;
+  let command = (match ? match[1] : trimmed).trim();
+  command = command
+    .replace(TEST_COMMAND_FILTER_RE, "")
+    .replace(/\s+\|\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!command || /^(tests|build)$/i.test(command)) return null;
   return command;
+}
+
+function canonicalValidationCommand(value: string): string | null {
+  return validationCommand(`${value.replace(TEST_RESULT_RE, "").trim()} passed`);
+}
+
+function factTexts(digest: Layer2Digest, kind: Layer2Digest["facts"][number]["kind"]): string[] {
+  return (digest.facts ?? [])
+    .filter((fact) => fact.kind === kind)
+    .map((fact) => fact.text.trim())
+    .filter(Boolean);
+}
+
+function typedDecisionTexts(digest: Layer2Digest, category: "architecture" | "convention" | "implementation"): string[] {
+  return (digest.facts ?? [])
+    .filter((fact): fact is Extract<Layer2Digest["facts"][number], { kind: "decision" }> =>
+      fact.kind === "decision" && fact.category === category
+    )
+    .map((fact) => fact.text.trim())
+    .filter(Boolean);
+}
+
+function typedIssueTexts(digest: Layer2Digest): string[] {
+  const typed = (digest.facts ?? [])
+    .filter((fact): fact is Extract<Layer2Digest["facts"][number], { kind: "issue" }> =>
+      fact.kind === "issue" && fact.status === "open" && fact.durability !== "transient"
+    )
+    .map((fact) => fact.text.trim())
+    .filter((text) => text && !isFailedValidationIssue(text));
+  return typed.length > 0
+    ? typed
+    : digest.errors_encountered.filter((text) => !isFailedValidationIssue(text));
+}
+
+function typedArchitectureTexts(digest: Layer2Digest): string[] {
+  return (digest.facts ?? [])
+    .filter((fact): fact is Extract<Layer2Digest["facts"][number], { kind: "decision" }> =>
+      fact.kind === "decision" &&
+      fact.category === "architecture" &&
+      fact.durability === "project"
+    )
+    .map((fact) => fact.text.trim())
+    .filter((text) =>
+      text.length >= 12 &&
+      text.length <= 220 &&
+      !TRANSIENT_DECISION_PREFIX.test(text) &&
+      !TRANSIENT_MEMORY_RE.test(text)
+    );
+}
+
+function isFailedValidationIssue(text: string): boolean {
+  const trimmed = text.trim();
+  if (!/\bfailed$/i.test(trimmed)) return false;
+  return canonicalValidationCommand(trimmed) !== null ||
+    /\b(?:test|jest|vitest|pytest|mocha|rspec|phpunit|dotnet test|go test|cargo test)\b/i.test(trimmed);
+}
+
+function recentWorkSummary(digest: Layer2Digest): string | null {
+  if ((digest.facts ?? []).length === 0) return digest.summary;
+
+  const work = factTexts(digest, "work");
+  const decisions = typedDecisionTexts(digest, "implementation");
+  const validation = digest.validation
+    .map(validationCommand)
+    .filter((command): command is string => command !== null)
+    .slice(0, 1);
+  const parts: string[] = [];
+
+  if (digest.files_modified.length > 0) {
+    const files = digest.files_modified.length === 1
+      ? digest.files_modified[0]
+      : digest.files_modified.length === 2
+        ? `${digest.files_modified[0]} and ${digest.files_modified[1]}`
+        : `${digest.files_modified[0]}, ${digest.files_modified[1]}, and ${digest.files_modified.length - 2} more files`;
+    parts.push(`Updated ${files}`);
+  } else if (work.length > 0) {
+    parts.push(work[0]!);
+  } else if (digest.goal) {
+    parts.push(digest.goal);
+  }
+
+  if (decisions.length > 0) parts.push(decisions[0]!);
+  if (validation.length > 0) parts.push(`Validation: ${validation[0]} passed`);
+  const joined = parts.join(". ").replace(/\.+/g, ".").trim();
+  return joined || digest.summary;
 }
 
 const ISSUE_STOPWORDS = new Set([
@@ -105,8 +201,8 @@ export function mergeIntoProjectMemory(
     digest.decisions.length > 0 ||
     digest.errors_encountered.length > 0 ||
     digest.validation.length > 0;
-  const summary = digest.summary?.trim();
-  const newEntry: RecentWorkEntry | null = hasSubstantiveWork && summary ? {
+  const summary = recentWorkSummary(digest)?.trim();
+  const newEntry: RecentWorkEntry | null = hasSubstantiveWork && summary && isUsefulRecentSummary(summary, digest) ? {
     id: randomUUID() as any,
     project_id: existing.project_id,
     session_id: sessionId as any,
@@ -124,7 +220,9 @@ export function mergeIntoProjectMemory(
     return issue;
   });
 
-  for (const error of digest.errors_encountered) {
+  for (const rawError of typedIssueTexts(digest)) {
+    const error = cleanIssueDescription(rawError);
+    if (!error) continue;
     const alreadyKnown = knownIssues.some((issue) =>
       issue.description.includes(error) || error.includes(issue.description)
     );
@@ -147,8 +245,9 @@ export function mergeIntoProjectMemory(
     .filter(Boolean);
   const archLines = [...existingLines];
   const archSet = new Set(archLines);
-  for (const decision of digest.decisions) {
-    if (isArchitectureNote(decision) && !archSet.has(decision.trim())) {
+  const typedArch = typedArchitectureTexts(digest);
+  for (const decision of typedArch) {
+    if (!archSet.has(decision.trim())) {
       archLines.push(decision.trim());
       archSet.add(decision.trim());
     }
@@ -156,16 +255,30 @@ export function mergeIntoProjectMemory(
   const architecture = archLines.join("\n");
 
   // ── how_to_test: validation commands observed in successful sessions ──────
-  const howToTest = [...(existing.how_to_test ?? [])];
-  for (const note of digest.validation) {
+  const howToTest: string[] = [];
+  const seenTestCommands = new Set<string>();
+  for (const existingCommand of existing.how_to_test ?? []) {
+    const canonical = canonicalValidationCommand(existingCommand);
+    if (canonical && !seenTestCommands.has(canonical)) {
+      seenTestCommands.add(canonical);
+      howToTest.push(canonical);
+    }
+  }
+  for (const note of [...digest.validation, ...factTexts(digest, "validation")]) {
     const command = validationCommand(note);
-    if (command && !howToTest.includes(command)) howToTest.push(command);
+    if (command && !seenTestCommands.has(command)) {
+      seenTestCommands.add(command);
+      howToTest.push(command);
+    }
   }
   const trimmedHowToTest = howToTest.slice(-20);
 
   // ── conventions: useful non-architecture decisions, deduplicated, max 20 ──
   const conventions = [...existing.conventions];
-  for (const decision of digest.decisions) {
+  const conventionCandidates = [
+    ...typedDecisionTexts(digest, "convention"),
+  ];
+  for (const decision of conventionCandidates) {
     if (!archSet.has(decision.trim()) && isUsefulConvention(decision) && !conventions.includes(decision)) {
       conventions.push(decision);
     }

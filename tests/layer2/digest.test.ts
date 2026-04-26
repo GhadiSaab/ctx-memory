@@ -8,6 +8,7 @@ function makeLayer1(overrides: Partial<Layer1Output> = {}): Layer1Output {
   return {
     session_id: "sid-1" as any,
     goal: "Implement authentication",
+    facts: [],
     weightedMessages: [],
     events: [],
     decisions: [],
@@ -63,6 +64,18 @@ describe("generateDigest — field mapping", () => {
     expect(d.goal).toBe("Build login flow");
   });
 
+  it("stores a concise task goal instead of a long raw prompt", () => {
+    const d = generateDigest(
+      makeLayer1({
+        goal: "Can you please improve the digest quality mostly focusing on decisions and errors arrays. Here are evaluator notes: summary is garbled and goal is raw.",
+      }),
+      "completed",
+      0
+    );
+    expect(d.goal).toBe("improve the digest quality mostly focusing on decisions and errors arrays");
+    expect(d.goal).not.toContain("Here are evaluator notes");
+  });
+
   it("creates a concise summary from goal, files, and validation", () => {
     const d = generateDigest(
       makeLayer1({
@@ -73,8 +86,25 @@ describe("generateDigest — field mapping", () => {
       0
     );
     expect(d.summary).toContain("Updated src/layer3/memory.ts");
-    expect(d.summary).toContain("improve Layer 3 project memory quality");
+    expect(d.summary).toContain("Improve Layer 3 project memory quality");
     expect(d.summary).toContain("Validation: npm run build passed");
+  });
+
+  it("builds summary with stable decision and issue sentences", () => {
+    const d = generateDigest(
+      makeLayer1({
+        goal: "fix digest quality",
+        decisions: ["The architecture uses deterministic Layer 1 extraction before Layer 2 cleanup."],
+        errors: ["decisions and errors arrays were empty"],
+        events: [fileEvent("src/layer1/combiner.ts", "file_modified")],
+      }),
+      "completed",
+      0
+    );
+    expect(d.summary).toContain("Goal: Fix digest quality");
+    expect(d.summary).toContain("Updated src/layer1/combiner.ts");
+    expect(d.summary).toContain("Decision: The architecture uses deterministic Layer 1 extraction before Layer 2 cleanup.");
+    expect(d.summary).toContain("Issue: decisions and errors arrays were empty");
   });
 
   it("falls back to first decision when goal is null", () => {
@@ -109,6 +139,8 @@ describe("generateDigest — field mapping", () => {
   it("maps validation from test events", () => {
     const d = generateDigest(makeLayer1({ events: [testRunEvent("npm test", 2)] }), "completed", 0);
     expect(d.validation).toEqual(["npm test failed"]);
+    expect(d.errors_encountered).toEqual([]);
+    expect(d.facts.filter((fact) => fact.kind === "issue")).toEqual([]);
   });
 
   it("maps keywords from layer1.keywords", () => {
@@ -246,6 +278,7 @@ describe("generateDigest — token budget", () => {
       decisions: d.decisions,
       errors_encountered: d.errors_encountered,
       validation: d.validation,
+      facts: d.facts,
       keywords: d.keywords,
       outcome: d.outcome,
       estimated_tokens: 0,
@@ -274,6 +307,7 @@ describe("generateDigest — robustness", () => {
     const minimal: Layer1Output = {
       session_id: "sid" as any,
       goal: null,
+      facts: [],
       weightedMessages: [],
       events: [],
       decisions: [],

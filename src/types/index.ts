@@ -30,6 +30,19 @@ export type {
 } from "./events.js";
 
 export type {
+  FactKind,
+  FactSource,
+  FactDurability,
+  DecisionCategory,
+  IssueStatus,
+  BaseFact,
+  GoalFact,
+  DecisionFact,
+  IssueFact,
+  WorkFact,
+  ValidationFact,
+  KeywordFact,
+  ExtractedFact,
   Layer1Output,
   Layer2Digest,
   KnownIssue,
