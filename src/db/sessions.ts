@@ -1,6 +1,5 @@
 import { db } from "./connection.js";
 import type { Session, UUID, UnixMs, ToolName, SessionOutcome } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
@@ -135,7 +134,7 @@ export function createSession(fields: {
 }): Session {
   const now = Date.now() as UnixMs;
   const row = {
-    id: fields.id ?? uuid(),
+    id: fields.id ?? crypto.randomUUID(),
     project_id: fields.project_id,
     tool: fields.tool,
     started_at: now,

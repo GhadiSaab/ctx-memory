@@ -2,7 +2,6 @@
 
 import { db } from "./connection.js";
 import type { Message, MessageRole, UUID, UnixMs } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
@@ -50,7 +49,7 @@ export function insertMessage(fields: {
   index: number;
 }): Message {
   const row: MessageRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     session_id: fields.session_id,
     role: fields.role,
     content: fields.content,

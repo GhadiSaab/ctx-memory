@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { v4 as uuid } from "uuid";
 import type { Message, SessionOutcome, ToolName } from "../types/index.js";
 import { detectTool } from "./detect.js";
 import { resolveProject } from "./project.js";
@@ -230,7 +229,7 @@ export async function main(): Promise<void> {
 
   const cwd = process.cwd();
   const { projectId } = await resolveProject(cwd);
-  const sessionId = uuid();
+  const sessionId = crypto.randomUUID();
   const sessionStartMs = Date.now();
 
   process.env["CTX_MEMORY_SESSION_ID"] = sessionId;
