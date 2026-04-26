@@ -45,6 +45,51 @@ function validationCommand(note: string): string | null {
   return command;
 }
 
+const ISSUE_STOPWORDS = new Set([
+  "the", "and", "for", "this", "that", "with", "from", "have", "will",
+  "are", "was", "were", "been", "has", "had", "not", "but", "what",
+  "all", "can", "its", "your", "our", "their", "they", "you", "we",
+  "about", "into", "over", "after", "before", "just", "also", "more",
+  "some", "any", "yes", "use", "used", "using", "remove", "removed",
+  "everything", "related", "moment", "causing", "errors", "error",
+  "well", "supported", "codebase", "tests", "cli", "etc",
+]);
+
+function issueTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !ISSUE_STOPWORDS.has(token));
+}
+
+function issueResolutionEvidence(digest: Layer2Digest): string {
+  return [
+    digest.goal ?? "",
+    digest.summary ?? "",
+    ...digest.decisions,
+    ...digest.files_modified,
+    ...digest.validation,
+    ...digest.keywords,
+  ].join("\n");
+}
+
+function resolvesKnownIssue(issue: KnownIssue, digest: Layer2Digest): boolean {
+  if (digest.outcome !== "completed") return false;
+
+  const description = issue.description.toLowerCase();
+  if (digest.keywords.some((kw) => description.includes(kw.toLowerCase()))) {
+    return true;
+  }
+
+  const evidenceTokens = new Set(issueTokens(issueResolutionEvidence(digest)));
+  const descriptionTokens = issueTokens(issue.description);
+  if (descriptionTokens.length === 0) return false;
+
+  const meaningfulMatches = descriptionTokens.filter((token) => evidenceTokens.has(token));
+  return meaningfulMatches.length >= Math.min(2, descriptionTokens.length);
+}
+
 // ─── mergeIntoProjectMemory ───────────────────────────────────────────────────
 
 export function mergeIntoProjectMemory(
@@ -73,10 +118,7 @@ export function mergeIntoProjectMemory(
   // ── known_issues: add new, resolve matching on completion ─────────────────
   const knownIssues: KnownIssue[] = existing.known_issues.map((issue) => {
     if (issue.resolved_at !== null) return issue; // already resolved
-    if (
-      digest.outcome === "completed" &&
-      digest.keywords.some((kw) => issue.description.toLowerCase().includes(kw.toLowerCase()))
-    ) {
+    if (resolvesKnownIssue(issue, digest)) {
       return { ...issue, resolved_at: now, resolved_in_session: sessionId as any };
     }
     return issue;

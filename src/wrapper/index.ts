@@ -31,7 +31,7 @@ export function resolveOutcome(
 ): SessionOutcome {
   if (signal) return "interrupted";
   if (code === 0) return "completed";
-  if (code === 130) return "interrupted";
+  if (code !== null && code >= 128 && code <= 192) return "interrupted";
   return "crashed";
 }
 

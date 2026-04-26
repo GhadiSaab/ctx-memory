@@ -180,6 +180,30 @@ describe("mergeIntoProjectMemory — known_issues", () => {
     expect(issue.resolved_in_session).toBe("sid-fix");
   });
 
+  it("marks matching open issue as resolved from digest text when keywords are empty", () => {
+    const existing = makeMemory({
+      known_issues: [
+        {
+          id: "i1" as any,
+          project_id: "proj-1" as any,
+          description: "remove everything related to antigravity for the moment",
+          detected_at: 0 as any,
+          resolved_at: null,
+          resolved_in_session: null,
+        },
+      ],
+    });
+    const digest = makeDigest({
+      outcome: "completed",
+      keywords: [],
+      summary: "Removed Antigravity integration from the wrapper, CLI, MCP handler, and tests.",
+      files_modified: ["src/wrapper/index.ts", "tests/wrapper/antigravity.test.ts"],
+    });
+    const result = mergeIntoProjectMemory(existing, digest, "sid-fix");
+    expect(result.known_issues[0].resolved_at).not.toBeNull();
+    expect(result.known_issues[0].resolved_in_session).toBe("sid-fix");
+  });
+
   it("does not resolve issue when outcome is not 'completed'", () => {
     const existing = makeMemory({
       known_issues: [

@@ -19,12 +19,16 @@ describe("resolveOutcome", () => {
     expect(resolveOutcome(130, null)).toBe("interrupted");
   });
 
+  it("returns 'interrupted' for signal-encoded exit codes", () => {
+    expect(resolveOutcome(143, null)).toBe("interrupted");
+  });
+
   it("returns 'interrupted' when a signal is received", () => {
     expect(resolveOutcome(null, "SIGINT")).toBe("interrupted");
     expect(resolveOutcome(null, "SIGTERM")).toBe("interrupted");
   });
 
-  it("returns 'crashed' for non-zero, non-130 exit codes", () => {
+  it("returns 'crashed' for non-zero, non-signal exit codes", () => {
     expect(resolveOutcome(1, null)).toBe("crashed");
     expect(resolveOutcome(127, null)).toBe("crashed");
     expect(resolveOutcome(255, null)).toBe("crashed");
