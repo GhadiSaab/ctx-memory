@@ -1,6 +1,5 @@
 import { db } from "./connection.js";
 import type { Layer2Digest, UUID, UnixMs, SessionOutcome } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
@@ -66,7 +65,7 @@ export function writeDigest(
     Partial<Pick<Layer2Digest, "summary" | "validation">>
 ): Layer2Digest {
   const row: DigestRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     session_id: fields.session_id,
     goal: fields.goal,
     summary: fields.summary ?? fields.goal,

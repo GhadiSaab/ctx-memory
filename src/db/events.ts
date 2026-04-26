@@ -1,6 +1,5 @@
 import { db } from "./connection.js";
 import type { ExtractedEvent, EventType, EventPayload, EventSource, UUID, UnixMs } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
@@ -51,7 +50,7 @@ export function insertEvent(fields: {
   source: EventSource;
 }): ExtractedEvent {
   const row: EventRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     session_id: fields.session_id,
     type: fields.type,
     payload: JSON.stringify(fields.payload),

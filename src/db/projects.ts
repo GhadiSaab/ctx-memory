@@ -1,6 +1,5 @@
 import { db } from "./connection.js";
 import type { Project, UUID, UnixMs } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
@@ -69,7 +68,7 @@ export function createProject(fields: {
 }): Project {
   const now = Date.now() as UnixMs;
   const row: ProjectRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     name: fields.name,
     path: fields.path,
     git_remote: fields.git_remote,

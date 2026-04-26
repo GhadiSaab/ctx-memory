@@ -2,7 +2,6 @@
 
 import { db } from "./connection.js";
 import type { KnownIssue, RecentWorkEntry, UUID, UnixMs } from "../types/index.js";
-import { v4 as uuid } from "uuid";
 
 // ─── Row mappings ─────────────────────────────────────────────────────────────
 
@@ -86,7 +85,7 @@ export function createKnownIssue(fields: {
   description: string;
 }): KnownIssue {
   const row: KnownIssueRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     project_id: fields.project_id,
     description: fields.description,
     detected_at: Date.now(),
@@ -117,7 +116,7 @@ export function addRecentWork(fields: {
   summary: string;
 }): RecentWorkEntry {
   const row: RecentWorkRow = {
-    id: uuid(),
+    id: crypto.randomUUID(),
     project_id: fields.project_id,
     session_id: fields.session_id,
     summary: fields.summary,
