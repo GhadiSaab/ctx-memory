@@ -56,7 +56,8 @@ describe("digest quality regressions", () => {
     expect(digest.decisions.join("\n")).toMatch(/JWT auth/i);
     expect(digest.decisions.join("\n")).toMatch(/cursor pagination/i);
     expect(digest.decisions.join("\n")).toMatch(/body parsing/i);
-    expect(memory.architecture).toMatch(/JWT auth|cursor pagination|body parsing/i);
+    expect(memory.architecture).toMatch(/JWT auth/i);
+    expect(memory.architecture).not.toMatch(/body parsing/i);
   });
 
   it("does not store assistant scratch-work or skill dumps as errors or known issues", () => {
@@ -141,5 +142,103 @@ describe("digest quality regressions", () => {
 
     expect(memory.architecture).toContain("JWT authentication with refresh token cookies");
     expect(memory.architecture).not.toMatch(/tests need to be updated|request shape/i);
+  });
+
+  it("splits mixed architecture and work prose into semantic architecture facts", () => {
+    const { memory } = run([
+      msg("user", "capture the login architecture", 0),
+      msg("assistant", "I'll use PostgreSQL for the main database, and Redis for session caching, and update the tests for the new login flow.", 1),
+    ], [
+      event("edit_file", { path: "tests/login.test.ts" }),
+      event("bash", { command: "npm test -- --testPathPattern=login" }, { stdout: "1 passed" }, true),
+    ]);
+
+    expect(memory.architecture).toContain("Main database uses PostgreSQL.");
+    expect(memory.architecture).toContain("Session caching uses Redis.");
+    expect(memory.architecture).not.toMatch(/update the tests|new login flow/i);
+    expect(memory.recent_work[0]?.summary).toContain("Updated tests/login.test.ts");
+  });
+
+  it("does not recursively wrap already-rendered architecture facts", () => {
+    const { digest, memory } = run([
+      msg("user", "preserve known architecture", 0),
+      msg("assistant", "Architecture uses Architecture uses createApp(db) factory with in-memory SQLite for tests.", 1),
+    ]);
+
+    expect(digest.decisions.join("\n")).not.toMatch(/Architecture uses Architecture uses/i);
+    expect(memory.architecture).toContain("Test harness uses createApp(db) factory with in-memory SQLite.");
+    expect(memory.architecture).not.toMatch(/Architecture uses Architecture uses/i);
+  });
+
+  it("filters TDD scaffolding fragments out of decisions and conventions", () => {
+    const { digest, memory } = run([
+      msg("user", "use TDD to fix login", 0),
+      msg("assistant", "**RED**: add failing regression test for login."),
+      msg("assistant", "Using TDD to implement the smallest fix."),
+      msg("assistant", "The bug must have been fixed previously."),
+    ]);
+
+    const text = [...digest.decisions, memory.architecture, ...memory.conventions].join("\n");
+    expect(text).not.toMatch(/\*\*RED\*\*|Using TDD|bug must have been fixed previously/i);
+  });
+
+  it("strips markdown summary headers instead of storing them as decisions or recent work", () => {
+    const { digest, memory } = run([
+      msg("user", "fix the TypeError in request parsing", 0),
+      msg("assistant", "Here's what changed:\n- Fixed request body parsing so empty payloads become an empty object.", 1),
+    ], [
+      event("edit_file", { path: "src/server.ts" }),
+      event("bash", { command: "npm test -- --testPathPattern=server" }, { stdout: "1 passed" }, true),
+    ]);
+
+    const text = [
+      ...digest.decisions,
+      memory.architecture,
+      memory.recent_work[0]?.summary ?? "",
+    ].join("\n");
+    expect(text).not.toMatch(/Here's what changed/i);
+    expect(memory.recent_work[0]?.summary).toMatch(/Fixed request body parsing|Updated src\/server\.ts/i);
+  });
+
+  it("filters superpowers TDD scaffolding out of decisions", () => {
+    const { digest, memory } = run([
+      msg("user", "use TDD to fix todos", 0),
+      msg("assistant", "Using superpowers:test-driven-development to drive the fix through RED/GREEN/REFACTOR.", 1),
+      msg("assistant", "Fixed the todo deletion handler to return 404 for missing rows.", 2),
+    ]);
+
+    const text = [...digest.decisions, memory.architecture, ...memory.conventions].join("\n");
+    expect(text).not.toMatch(/superpowers:test-driven-development|RED\/GREEN\/REFACTOR/i);
+    expect(digest.decisions.join("\n")).toMatch(/todo deletion handler/i);
+  });
+
+  it("filters query and TDD process noise out of keywords while keeping error details", () => {
+    const { digest } = run([
+      msg("user", "what do you know about this project from previous sessions?", 0),
+      msg("assistant", "The RED phase should fail for the right reason, then GREEN.", 1),
+      msg("user", "TypeError: Cannot read properties of undefined (reading 'id') in deleteTodo", 2),
+    ]);
+
+    expect(digest.keywords).toContain("typeerror");
+    expect(digest.keywords).toContain("undefined");
+    expect(digest.keywords).not.toEqual(expect.arrayContaining([
+      "know",
+      "project",
+      "previous",
+      "sessions",
+      "fail",
+      "right",
+      "reason",
+      "green",
+    ]));
+  });
+
+  it("rejects file-artifact prose from Architecture", () => {
+    const { memory } = run([
+      msg("user", "summarize the todo app test setup", 0),
+      msg("assistant", "todos.test.js, the app is app.js uses createApp(db).", 1),
+    ]);
+
+    expect(memory.architecture).not.toMatch(/todos\.test\.js|app\.js|createApp\(db\)/i);
   });
 });

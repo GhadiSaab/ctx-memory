@@ -71,6 +71,90 @@ function cleanList(values: string[], maxItems: number, maxChars: number): string
   return out;
 }
 
+const DECISION_NOISE_RE = /^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*$/i;
+const DECISION_SCAFFOLDING_RE = /\b(?:superpowers:[\w-]+|test-driven[- ]development|using tdd|red green refactor|\*\*red\*\*|\*\*green\*\*|\*\*refactor\*\*)\b/i;
+
+function cleanDecision(value: string): string | null {
+  const cleaned = cleanText(value, 180);
+  if (!cleaned) return null;
+  const stripped = cleaned
+    .replace(/^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*/i, "")
+    .replace(/^(?:architecture\s+uses?\s+){2,}/i, "Architecture uses ")
+    .trim();
+  if (!stripped || DECISION_NOISE_RE.test(stripped) || DECISION_SCAFFOLDING_RE.test(stripped)) return null;
+  return stripped;
+}
+
+const KEYWORD_STOPWORDS = new Set([
+  "the", "and", "for", "this", "that", "with", "from", "have", "will",
+  "are", "was", "were", "been", "has", "had", "not", "but", "what",
+  "all", "can", "its", "your", "our", "their", "they", "you", "we",
+  "about", "into", "over", "after", "before", "just", "also", "more",
+  "some", "any", "yes", "use", "used", "using", "uses", "need", "needs",
+  "needed", "now", "next", "update", "updated", "add", "added", "fix",
+  "fixed", "changed", "here", "know", "project", "previous", "sessions",
+  "session", "right", "reason", "green", "red", "refactor", "tdd",
+  "architecture", "cannot", "read", "properties", "reading",
+  "superpowers", "test", "tests", "testing", "validation", "coverage",
+  "fail", "fails", "failed", "failure", "pass", "passed", "passing",
+  "delete", "todo", "todos", "driven", "development", "implement",
+  "implemented", "create", "created", "build", "run", "ran",
+  "source", "file", "files", "src", "dist", "lib", "app", "index",
+  "spec", "should", "would", "could",
+]);
+
+const SHORT_KEYWORDS = new Set(["api", "jwt", "mcp", "db", "ui", "ux", "ci"]);
+const QUERY_TEXT_RE = /\b(?:what do you know|previous sessions|use llm memory|project memory|get_project_memory)\b/i;
+
+function keywordTokens(value: string | null | undefined): string[] {
+  if (!value || QUERY_TEXT_RE.test(value)) return [];
+  return value
+    .toLowerCase()
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => {
+      if (!token || KEYWORD_STOPWORDS.has(token)) return false;
+      if (/^\d+$/.test(token)) return false;
+      return token.length > 2 || SHORT_KEYWORDS.has(token);
+    });
+}
+
+function deriveKeywords(
+  layer1: Layer1Output,
+  facts: ExtractedFact[],
+  decisions: string[],
+  errors: string[],
+  files: string[]
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  function addToken(token: string): void {
+    const cleaned = token.trim().toLowerCase();
+    if (!cleaned || seen.has(cleaned)) return;
+    seen.add(cleaned);
+    out.push(cleaned);
+  }
+
+  function addValue(value: string | null | undefined): void {
+    for (const token of keywordTokens(value)) addToken(token);
+  }
+
+  for (const keyword of facts.filter((fact) => fact.kind === "keyword").map((fact) => fact.text)) addValue(keyword);
+  for (const keyword of layer1.keywords ?? []) addValue(keyword);
+  for (const error of errors) addValue(error);
+  for (const decision of decisions) addValue(decision);
+  for (const fact of facts.filter((fact) => fact.kind === "issue" || fact.kind === "decision").map((fact) => fact.text)) addValue(fact);
+  for (const file of files) {
+    const stem = file.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "");
+    addValue(stem);
+  }
+
+  return out.slice(0, 10);
+}
+
 function dedupeFacts(facts: ExtractedFact[]): ExtractedFact[] {
   const out: ExtractedFact[] = [];
   const seen = new Set<string>();
@@ -83,6 +167,16 @@ function dedupeFacts(facts: ExtractedFact[]): ExtractedFact[] {
     out.push({ ...fact, text });
   }
   return out;
+}
+
+function compactFacts(facts: ExtractedFact[], maxItems: number, maxTextChars: number): ExtractedFact[] {
+  return facts.slice(0, maxItems).map((fact) => ({
+    ...fact,
+    text: fact.text.length > maxTextChars ? fact.text.slice(0, maxTextChars - 1).trimEnd() + "…" : fact.text,
+    evidence: fact.kind === "issue" && fact.evidence && fact.evidence.length > maxTextChars
+      ? fact.evidence.slice(0, maxTextChars - 1).trimEnd() + "…"
+      : fact.kind === "issue" ? fact.evidence : undefined,
+  }) as ExtractedFact);
 }
 
 function eventFacts(layer1: Layer1Output): ExtractedFact[] {
@@ -245,7 +339,10 @@ export function generateDigest(
 
     let facts = dedupeFacts([...(layer1.facts ?? []), ...legacyFacts(layer1), ...eventFacts(layer1)]);
     let decisions = cleanList(
-      facts.filter((fact) => fact.kind === "decision").map((fact) => fact.text),
+      facts
+        .filter((fact) => fact.kind === "decision")
+        .map((fact) => cleanDecision(fact.text))
+        .filter((decision): decision is string => decision !== null),
       8,
       180
     );
@@ -254,9 +351,8 @@ export function generateDigest(
       5,
       180
     );
-    const factKeywords = facts.filter((fact) => fact.kind === "keyword").map((fact) => fact.text);
-    let keywords = cleanList([...factKeywords, ...(layer1.keywords ?? []), ...decisions, ...errors], 10, 80);
     let files = filesModified.slice(0, 10);
+    let keywords = deriveKeywords(layer1, facts, decisions, errors, files);
     let work = cleanList(facts.filter((fact) => fact.kind === "work").map((fact) => fact.text), 5, 140);
     let goalStr = conciseGoal(layer1.goal) ?? cleanText(decisions[0], 120) ?? "No goal detected";
     let validation = collectValidation(layer1);
@@ -277,7 +373,7 @@ export function generateDigest(
       validation = validation.slice(0, 5);
       keywords = keywords.slice(0, 10);
       work = work.slice(0, 3);
-      facts = facts.slice(0, 20);
+      facts = compactFacts(facts, 12, 120);
       summary = buildSummary(goalStr, files, work, decisions, errors, validation, outcome);
       tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
 
@@ -285,8 +381,20 @@ export function generateDigest(
         goalStr = goalStr.length > 150 ? goalStr.slice(0, 149) + "…" : goalStr;
         decisions = decisions.slice(0, 3).map(d => d.length > 80 ? d.slice(0, 80) + "…" : d);
         errors = errors.slice(0, 2).map(e => e.length > 80 ? e.slice(0, 80) + "…" : e);
-        facts = facts.slice(0, 12);
+        validation = validation.slice(0, 3);
+        keywords = keywords.slice(0, 6);
+        facts = compactFacts(facts, 8, 80);
+        summary = summary ? cleanText(summary, 180) : summary;
         summary = buildSummary(goalStr, files, work, decisions, errors, validation, outcome);
+        tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
+      }
+
+      if (tokens > BUDGET) {
+        facts = compactFacts(facts, 5, 60);
+        validation = validation.slice(0, 2);
+        decisions = decisions.slice(0, 2);
+        errors = errors.slice(0, 1);
+        summary = summary ? cleanText(summary, 140) : summary;
         tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
       }
     }

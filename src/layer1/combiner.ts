@@ -23,10 +23,14 @@ const DURABLE_DECISION_SIGNALS = [
   "instead of", "rather than",
 ];
 
-const TRANSIENT_DECISION_RE = /\b(?:mcp tool|retrieve the project memory|get_project_memory|store that message|i'?ll check|i'?ll inspect|i'?ll use|i am going to|i'?m going to)\b/i;
+const MEMORY_LOOKUP_RE = /\b(?:mcp tool|retrieve the project memory|get_project_memory|store that message|use llm memory|get memory mcp)\b/i;
+const TRANSIENT_DECISION_RE = /\b(?:i'?ll check|i'?ll inspect|i am going to|i'?m going to)\b/i;
 
 const ERROR_LINE_RE = /\b(error|failed|failure|exception|traceback|typeerror|syntaxerror|referenceerror|enoent|eacces|econnrefused|cannot find|module not found|permission denied|timed out|timeout|crash(?:ed)?)\b/i;
 const SCRATCH_WORK_RE = /\b(now i need|now let me|let me|i'?ll update|i'?ll add|i need to update|also add a test|next i|i should|need to cover|base directory for this skill|#\s+\w+)/i;
+const SCAFFOLDING_RE = /\b(?:superpowers:[\w-]+|using tdd|test-driven[- ]development|red green refactor|red phase|green phase|refactor phase|\*\*red\*\*|\*\*green\*\*|\*\*refactor\*\*)\b/i;
+const SESSION_OBSERVATION_RE = /\b(?:bug|issue|error|test|build)\s+(?:must have|appears to have|seems to have|was already|is already|had been)\b|\bmust have been fixed\b/i;
+const PRESENTATION_HEADER_RE = /^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*$/i;
 const IMPLEMENTATION_RE = /\b(implemented|added|updated|fixed|changed|created|wired|handled|guarded|parsed|introduced|refactored|modified)\b/i;
 const CONVENTION_RE = /\b(always|never|prefer|keep|must|should|convention|use .+ imports|do not|don't)\b/i;
 const PROCESS_TERMS = new Set([
@@ -64,6 +68,19 @@ function cleanSnippet(content: string, max = 160): string | null {
   return cleaned.length > max ? cleaned.slice(0, max - 1).trimEnd() + "…" : cleaned;
 }
 
+function cleanDecisionCandidate(content: string): string | null {
+  const cleaned = cleanSnippet(content, 180);
+  if (!cleaned) return null;
+  const stripped = cleaned
+    .replace(/^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*/i, "")
+    .replace(/^(?:architecture\s+uses?\s+){2,}/i, "Architecture uses ")
+    .replace(/^\*{0,2}(red|green|refactor)\*{0,2}\s*:?\s*/i, "")
+    .replace(/^using\s+tdd\s+to\s+/i, "")
+    .trim();
+  if (!stripped || stripped.length < 8) return null;
+  return stripped.length > 160 ? stripped.slice(0, 159).trimEnd() + "…" : stripped;
+}
+
 function factKey(fact: ExtractedFact): string {
   return `${fact.kind}:${fact.text.toLowerCase()}`;
 }
@@ -89,7 +106,6 @@ function tokens(text: string): string[] {
 
 function isDurableArchitectureFact(text: string): boolean {
   const terms = tokens(text);
-  if (terms.some((term) => PROCESS_TERMS.has(term))) return false;
 
   const domainHits = new Set(terms.filter((term) => ARCH_DOMAIN_TERMS.has(term)));
   if (domainHits.size === 0) return false;
@@ -112,11 +128,17 @@ function classifyDecision(text: string): DecisionCategory {
 }
 
 function isDecisionLike(text: string): boolean {
-  if (TRANSIENT_DECISION_RE.test(text) || SCRATCH_WORK_RE.test(text)) return false;
+  if (MEMORY_LOOKUP_RE.test(text)) return false;
+  if (SCAFFOLDING_RE.test(text)) return false;
+  if (SESSION_OBSERVATION_RE.test(text)) return false;
+  if (PRESENTATION_HEADER_RE.test(text.trim())) return false;
+  if (SCRATCH_WORK_RE.test(text)) return false;
+  const durableArchitecture = isDurableArchitectureFact(text);
+  if (TRANSIENT_DECISION_RE.test(text) && !durableArchitecture) return false;
   if (isProcessOnlyStatement(text)) return false;
   const lower = text.toLowerCase();
   return (
-    isDurableArchitectureFact(text) ||
+    durableArchitecture ||
     DECISION_SIGNALS.some((sig) => lower.includes(sig.toLowerCase())) ||
     DURABLE_DECISION_SIGNALS.some((sig) => lower.includes(sig)) ||
     IMPLEMENTATION_RE.test(text)
@@ -160,7 +182,7 @@ function extractDecisionCandidates(messages: WeightedMessage[], patternDecisions
   const seen = new Set<string>();
 
   function add(value: string | null): void {
-    const cleaned = cleanSnippet(value ?? "", 160);
+    const cleaned = cleanDecisionCandidate(value ?? "");
     if (!cleaned || cleaned.length < 8 || !isDecisionLike(cleaned)) return;
     const key = cleaned.toLowerCase();
     if (!seen.has(key)) {
@@ -180,7 +202,6 @@ function extractDecisionCandidates(messages: WeightedMessage[], patternDecisions
       const trimmed = segment.trim();
       if (trimmed.length < 10 || trimmed.length > 220) continue;
       if (trimmed.includes("```") || trimmed.startsWith("#")) continue;
-      const lower = trimmed.toLowerCase();
       if (!isDecisionLike(trimmed)) continue;
       add(trimmed);
       if (decisions.length >= 8) return decisions;

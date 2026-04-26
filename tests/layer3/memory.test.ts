@@ -322,7 +322,7 @@ describe("mergeIntoProjectMemory — architecture", () => {
   it("appends architecture-note decisions (containing 'use', 'with', 'instead', 'switched')", () => {
     const digest = makeDigest({ facts: [decisionFact("Use Postgres instead of SQLite", "architecture")] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
-    expect(result.architecture).toContain("Use Postgres instead of SQLite");
+    expect(result.architecture).toContain("Database uses Postgres instead of SQLite.");
   });
 
   it("does not append decisions without architecture keywords", () => {
@@ -337,7 +337,7 @@ describe("mergeIntoProjectMemory — architecture", () => {
     const result = mergeIntoProjectMemory(existing, digest, "sid-1");
     const occurrences = result.architecture
       .split("\n")
-      .filter((l) => l.includes("Use Postgres instead of SQLite")).length;
+      .filter((l) => l.includes("Postgres instead of SQLite")).length;
     expect(occurrences).toBe(1);
   });
 
@@ -350,14 +350,14 @@ describe("mergeIntoProjectMemory — architecture", () => {
     });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     const lines = result.architecture.split("\n").filter(Boolean);
-    expect(lines).toContain("Use Redis with sessions");
-    expect(lines).toContain("Switched from REST to GraphQL");
+    expect(lines).toContain("Sessions use Redis.");
+    expect(lines).toContain("API layer uses REST to GraphQL.");
   });
 
   it("is case-insensitive for architecture keyword detection", () => {
     const digest = makeDigest({ facts: [decisionFact("SWITCHED to using bun instead of node", "architecture")] });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
-    expect(result.architecture).toContain("SWITCHED to using bun instead of node");
+    expect(result.architecture).toContain("Runtime/framework uses bun instead of node.");
   });
 
   it("rejects transient first-person architecture-looking text", () => {
@@ -369,6 +369,23 @@ describe("mergeIntoProjectMemory — architecture", () => {
   it("rejects assistant acknowledgements even when they contain architecture words", () => {
     const digest = makeDigest({
       decisions: ["Got it. This is the llm-memory project itself, backed by SQLite and exposed via MCP."],
+    });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.architecture).toBe("");
+  });
+
+  it("normalizes already-rendered generic architecture instead of nesting it", () => {
+    const digest = makeDigest({
+      facts: [decisionFact("Architecture uses Architecture uses createApp(db) factory with in-memory SQLite for tests.", "architecture")],
+    });
+    const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
+    expect(result.architecture).toContain("Test harness uses createApp(db) factory with in-memory SQLite.");
+    expect(result.architecture).not.toMatch(/Architecture uses Architecture uses/i);
+  });
+
+  it("rejects file names and test artifacts as architecture subjects", () => {
+    const digest = makeDigest({
+      facts: [decisionFact("todos.test.js, the app is app.js uses createApp(db)", "architecture")],
     });
     const result = mergeIntoProjectMemory(makeMemory(), digest, "sid-1");
     expect(result.architecture).toBe("");

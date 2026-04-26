@@ -15,15 +15,21 @@ const STOPWORDS = new Set([
   "here", "about", "into", "over", "after", "before", "just", "also",
   "more", "some", "any", "no", "yes", "get", "got", "let", "go",
   "see", "one", "two", "use", "used", "need", "needs", "needed",
-  "now", "next", "update", "add", "fix", "cover",
+  "now", "next", "update", "updated", "add", "added", "fix", "fixed", "cover",
+  "know", "project", "previous", "sessions", "right", "reason", "changed",
+  "architecture", "cannot", "read", "properties", "reading",
   // Common code words
   "function", "const", "return", "class", "import", "export", "default",
   "type", "interface", "new", "var", "let", "null", "undefined", "true",
   "false", "void", "async", "await", "try", "catch", "throw", "else",
   "case", "break", "continue", "switch", "while", "typeof", "instanceof",
+  // Process/test-loop words that often dominate agent transcripts
+  "test", "tests", "testing", "fail", "fails", "failed", "failure", "pass",
+  "passed", "passing", "green", "red", "refactor", "tdd", "superpowers",
+  "delete", "todo",
 ]);
 
-const NOISE_LINE_RE = /\b(now i need|now let me|let me|also add a test|base directory for this skill|i'?ll update|i need to update)\b/i;
+const NOISE_LINE_RE = /\b(now i need|now let me|let me|also add a test|base directory for this skill|i'?ll update|i need to update|superpowers:[\w-]+|test-driven[- ]development)\b/i;
 
 // ─── Preprocessing ────────────────────────────────────────────────────────────
 
