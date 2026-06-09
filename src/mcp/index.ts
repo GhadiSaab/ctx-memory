@@ -17,7 +17,6 @@ import {
   handleListSessions,
   handleSearchContext,
   handleEndSession,
-  getEventBuffer,
 } from "./handlers.js";
 
 // ─── Env ──────────────────────────────────────────────────────────────────────

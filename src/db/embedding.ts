@@ -28,7 +28,7 @@ export async function loadEmbedder(): Promise<void> {
 export async function embedText(text: string): Promise<Float32Array> {
   if (!embedder) throw new Error("Embedder not loaded — call loadEmbedder() first");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const output = await (embedder as any)(text, { pooling: "mean", normalize: true });
   // @xenova/transformers returns a Tensor; .data is a Float32Array
   return (output as any).data as Float32Array;
@@ -68,7 +68,8 @@ export interface SimilarSession {
   distance: number;
 }
 
-const stmtSearch = db.prepare<[Buffer, number], { id: string; distance: number }>(`
+// stmtSearch kept for future similarity search — prefix _ to mark intentionally unused
+const _stmtSearch = db.prepare<[Buffer, number], { id: string; distance: number }>(`
   SELECT s.id, ev.distance
   FROM session_embeddings ev
   JOIN sessions s ON s.rowid = ev.rowid

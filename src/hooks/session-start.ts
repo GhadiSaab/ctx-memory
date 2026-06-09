@@ -2,10 +2,9 @@
 // SessionStart hook — injects project memory as additionalContext.
 // Claude Code runs this at session start and injects stdout into the system prompt.
 
-import { getProjectByPathHash, getProjectById } from "../db/index.js";
+import { getProjectByPathHash } from "../db/index.js";
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { basename } from "node:path";
 
 function tryExec(cmd: string, cwd: string): string | null {
   try {
