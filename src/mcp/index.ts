@@ -209,6 +209,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
   }
 
+  // Close the database connection — ensures SQLite WAL is properly finalized
+  try { db.close(); } catch { /* best-effort */ }
+
   process.exit(0);
 }
 

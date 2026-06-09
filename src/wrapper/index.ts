@@ -302,10 +302,10 @@ export async function main(): Promise<void> {
     env: { ...process.env },
   });
 
-  // Forward signals to the real tool
-  process.on("SIGINT", () => toolProc.kill("SIGINT"));
-  process.on("SIGTERM", () => toolProc.kill("SIGTERM"));
-  process.on("SIGHUP", () => toolProc.kill("SIGHUP"));
+  // Forward signals to the real tool and clean up MCP sidecar
+  process.on("SIGINT", () => { mcpProc?.kill("SIGINT"); toolProc.kill("SIGINT"); });
+  process.on("SIGTERM", () => { mcpProc?.kill("SIGTERM"); toolProc.kill("SIGTERM"); });
+  process.on("SIGHUP", () => { mcpProc?.kill("SIGHUP"); toolProc.kill("SIGHUP"); });
 
   toolProc.on("exit", async (code, signal) => {
     const outcome = resolveOutcome(code, signal);
