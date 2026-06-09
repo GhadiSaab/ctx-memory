@@ -30,6 +30,20 @@
   "bin": {
     "ctx-memory": "./dist/src/cli/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/src/types/index.d.ts",
+      "import": "./dist/src/types/index.js"
+    },
+    "./cli": {
+      "types": "./dist/src/cli/index.d.ts",
+      "import": "./dist/src/cli/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/src/mcp/index.d.ts",
+      "import": "./dist/src/mcp/index.js"
+    }
+  },
   "scripts": {
     "prepare": "tsc -p tsconfig.build.json",
     "build": "tsc -p tsconfig.build.json",
