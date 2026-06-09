@@ -4,7 +4,7 @@
 // and triggers session end on exit.
 
 import { spawn, execFileSync } from "node:child_process";
-import { accessSync, constants, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { accessSync, constants, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -159,12 +159,26 @@ async function signalSessionEnd(
 const AGENTS_MD_HEADER = "<!-- ctx-memory: auto-generated, do not edit -->\n";
 
 function injectMarkdownContext(filePath: string, projectId: string): void {
+  // Security: resolve symlinks so the write target isn't redirected via a symlinked directory
+  const resolved = (() => {
+    try {
+      if (existsSync(filePath)) return realpathSync(filePath);
+      // File doesn't exist yet — resolve parent directory
+      const parent = filePath.substring(0, filePath.lastIndexOf("/"));
+      const base = filePath.substring(filePath.lastIndexOf("/") + 1);
+      const realParent = parent && existsSync(parent) ? realpathSync(parent) : parent;
+      return join(realParent, base);
+    } catch {
+      return filePath;
+    }
+  })();
+
   const project = getProjectById(projectId as UUID);
   if (!project?.memory_doc) return;
 
   let existing = "";
-  if (existsSync(filePath)) {
-    const content = readFileSync(filePath, "utf8");
+  if (existsSync(resolved)) {
+    const content = readFileSync(resolved, "utf8");
     if (content.startsWith(AGENTS_MD_HEADER)) {
       const markerEnd = content.indexOf("\n<!-- /ctx-memory -->");
       existing = markerEnd >= 0 ? content.slice(markerEnd + "\n<!-- /ctx-memory -->".length) : "";
@@ -180,7 +194,7 @@ function injectMarkdownContext(filePath: string, projectId: string): void {
     "\n<!-- /ctx-memory -->" +
     existing;
 
-  writeFileSync(filePath, injected, "utf8");
+  writeFileSync(resolved, injected, "utf8");
 }
 
 export function injectCodexContext(cwd: string, projectId: string): void {

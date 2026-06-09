@@ -179,12 +179,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   };
 });
 
-// ─── SIGTERM — flush and shut down cleanly ────────────────────────────────────
+// ─── Graceful shutdown helper (shared by SIGTERM and SIGINT) ──────────────────
 
-process.on("SIGTERM", async () => {
-  console.error("[ctx-memory] SIGTERM received — shutting down");
+let shuttingDown = false;
 
-  // If the wrapper set a session ID, trigger session end on SIGTERM —
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.error(`[ctx-memory] ${signal} received — shutting down`);
+
+  // If the wrapper set a session ID, trigger session end —
   // but only if the wrapper hasn't already processed it (digest not yet written).
   if (SESSION_ID && PROJECT_ID) {
     const alreadyDone = db.prepare<[string], { count: number }>(
@@ -205,7 +210,13 @@ process.on("SIGTERM", async () => {
   }
 
   process.exit(0);
-});
+}
+
+// Handle SIGTERM (e.g. from orchestration, service managers)
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+// Handle SIGINT (Ctrl+C in terminal) — prevents ungraceful exit
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 // ─── Connect ──────────────────────────────────────────────────────────────────
 

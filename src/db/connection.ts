@@ -4,7 +4,7 @@
 import Database, { type Database as DatabaseType } from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { homedir } from "os";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, realpathSync } from "fs";
 import { join } from "path";
 
 // ─── Path resolution ──────────────────────────────────────────────────────────
@@ -16,12 +16,27 @@ function resolveDbPath(raw: string): string {
   return raw;
 }
 
+function sanitizeDbPath(raw: string): string {
+  // Resolve the real path to prevent symlink-based path hijacking
+  const resolved = resolveDbPath(raw);
+  try {
+    // If the file or parent dir exists, resolve symlinks
+    const parent = resolved.lastIndexOf("/") > 0 ? resolved.substring(0, resolved.lastIndexOf("/")) : ".";
+    const realParent = existsSync(parent) ? realpathSync(parent) : parent;
+    const baseName = resolved.substring(resolved.lastIndexOf("/") + 1);
+    return join(realParent, baseName);
+  } catch {
+    // If realpath fails (e.g. parent doesn't exist yet), use as-is
+    return resolved;
+  }
+}
+
 const defaultDbPath = existsSync(resolveDbPath("~/.ctx-memory/store.db")) ||
   !existsSync(resolveDbPath("~/.llm-memory/store.db"))
   ? "~/.ctx-memory/store.db"
   : "~/.llm-memory/store.db";
 
-const DB_PATH = resolveDbPath(
+const DB_PATH = sanitizeDbPath(
   process.env["CTX_MEMORY_DB_PATH"] || process.env["LLM_MEMORY_DB_PATH"] || defaultDbPath
 );
 
