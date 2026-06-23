@@ -18,12 +18,19 @@ function tryExec(cmd: string, cwd: string): string | null {
 async function main(): Promise<void> {
   const cwd = process.cwd();
 
-  // Resolve project from cwd
-  const gitRoot = tryExec("git rev-parse --show-toplevel", cwd);
-  const resolvedPath = gitRoot ?? cwd;
-  const pathHash = createHash("sha256").update(resolvedPath).digest("hex");
+  // Try to use the project ID from env (set by the wrapper) first —
+  // it's the most reliable reference and avoids redundant resolution.
+  const envProjectId = process.env["CTX_MEMORY_PROJECT_ID"] ?? process.env["LLM_MEMORY_PROJECT_ID"];
+  let project = envProjectId ? getProjectById(envProjectId as any) : null;
 
-  const project = getProjectByPathHash(pathHash);
+  // Fallback: resolve from cwd if env var didn't yield a project
+  if (!project?.memory_doc) {
+    const gitRoot = tryExec("git rev-parse --show-toplevel", cwd);
+    const resolvedPath = gitRoot ?? cwd;
+    const pathHash = createHash("sha256").update(resolvedPath).digest("hex");
+    project = getProjectByPathHash(pathHash);
+  }
+
   if (!project?.memory_doc) {
     // No memory yet — nothing to inject
     process.exit(0);
@@ -32,7 +39,7 @@ async function main(): Promise<void> {
   const output = {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
-      additionalContext: `<ctx-memory>\n${project.memory_doc}\n</ctx-memory>`,
+      additionalContext: `<ctx-memory project-memory>\nThe following is context captured automatically from previous coding sessions on this project. Use it as background knowledge:\n${project.memory_doc}\n</ctx-memory>`,
     },
   };
 
