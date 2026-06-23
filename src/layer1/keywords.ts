@@ -13,6 +13,12 @@ export const DECISION_SIGNALS: readonly string[] = [
   "I'll use", "I'm using", "the architecture", "the design is",
   "I've decided", "we're going to use", "I chose", "I'm going with",
   "the solution is", "I implemented", "I added", "I created",
+  // additional common patterns
+  "built on", "powered by", "the stack is", "backed by",
+  "the framework", "we chose", "opted for", "settled on",
+  "the technology", "our tech stack", "using for", "deployed with",
+  "runs on", "based on", "set up with", "configured to use",
+  "I went with", "we went with", "ended up using", "the main library",
 ];
 
 export const GOAL_SIGNALS: readonly string[] = [
