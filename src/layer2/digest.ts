@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 
 // ─── Token budget ─────────────────────────────────────────────────────────────
 
-const BUDGET = 500;
+const BUDGET = 800;
 
 function estimateTokens(digest: Omit<Layer2Digest, "id" | "session_id" | "created_at">): number {
   return Math.ceil(JSON.stringify(digest).length / 4);
@@ -20,7 +20,12 @@ function cleanText(value: string | null | undefined, max = 180): string | null {
     .replace(/\s+/g, " ")
     .trim();
   if (!cleaned || cleaned === "No goal detected") return null;
-  return cleaned.length > max ? cleaned.slice(0, max - 1).trimEnd() + "…" : cleaned;
+  if (cleaned.length <= max) return cleaned;
+  // Try word-boundary cut to avoid mid-word truncation
+  const cut = cleaned.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const truncated = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return truncated.trimEnd() + "…";
 }
 
 function conciseGoal(goal: string | null): string | null {
@@ -90,17 +95,7 @@ const KEYWORD_STOPWORDS = new Set([
   "are", "was", "were", "been", "has", "had", "not", "but", "what",
   "all", "can", "its", "your", "our", "their", "they", "you", "we",
   "about", "into", "over", "after", "before", "just", "also", "more",
-  "some", "any", "yes", "use", "used", "using", "uses", "need", "needs",
-  "needed", "now", "next", "update", "updated", "add", "added", "fix",
-  "fixed", "changed", "here", "know", "project", "previous", "sessions",
-  "session", "right", "reason", "green", "red", "refactor", "tdd",
-  "architecture", "cannot", "read", "properties", "reading",
-  "superpowers", "test", "tests", "testing", "validation", "coverage",
-  "fail", "fails", "failed", "failure", "pass", "passed", "passing",
-  "delete", "todo", "todos", "driven", "development", "implement",
-  "implemented", "create", "created", "build", "run", "ran",
-  "source", "file", "files", "src", "dist", "lib", "app", "index",
-  "spec", "should", "would", "could",
+  "some", "any", "yes",
 ]);
 
 const SHORT_KEYWORDS = new Set(["api", "jwt", "mcp", "db", "ui", "ux", "ci"]);
@@ -170,13 +165,19 @@ function dedupeFacts(facts: ExtractedFact[]): ExtractedFact[] {
 }
 
 function compactFacts(facts: ExtractedFact[], maxItems: number, maxTextChars: number): ExtractedFact[] {
-  return facts.slice(0, maxItems).map((fact) => ({
-    ...fact,
-    text: fact.text.length > maxTextChars ? fact.text.slice(0, maxTextChars - 1).trimEnd() + "…" : fact.text,
-    evidence: fact.kind === "issue" && fact.evidence && fact.evidence.length > maxTextChars
-      ? fact.evidence.slice(0, maxTextChars - 1).trimEnd() + "…"
-      : fact.kind === "issue" ? fact.evidence : undefined,
-  }) as ExtractedFact);
+  return facts.slice(0, maxItems).map((fact) => {
+    const truncate = (text: string) => {
+      if (text.length <= maxTextChars) return text;
+      const cut = text.slice(0, maxTextChars - 1);
+      const lastSpace = cut.lastIndexOf(" ");
+      return (lastSpace > maxTextChars * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+    };
+    return {
+      ...fact,
+      text: truncate(fact.text),
+      evidence: fact.kind === "issue" && fact.evidence ? truncate(fact.evidence) : fact.kind === "issue" ? fact.evidence : undefined,
+    } as ExtractedFact;
+  });
 }
 
 function eventFacts(layer1: Layer1Output): ExtractedFact[] {
@@ -280,35 +281,41 @@ function buildSummary(
   validation: string[],
   outcome: SessionOutcome
 ): string | null {
-  const focus = conciseGoal(goal) ?? cleanText(decisions[0], 120);
   const fileSummary = summarizeFiles(files);
 
-  if (!focus && !fileSummary && work.length === 0 && decisions.length === 0 && errors.length === 0 && validation.length === 0) {
+  if (!goal && !fileSummary && work.length === 0 && decisions.length === 0 && errors.length === 0 && validation.length === 0) {
     return null;
   }
 
   const parts: string[] = [];
+
+  // Lead with what was actually done, not the goal
   if (fileSummary) {
-    parts.push(focus ? `Goal: ${sentenceCase(focus)}` : "Updated project files");
     parts.push(`Updated ${fileSummary}`);
   } else if (work.length > 0) {
     parts.push(work[0]!);
-  } else if (focus) {
-    parts.push(outcome === "completed" ? sentenceCase(focus) : `Goal: ${sentenceCase(focus)}`);
   }
 
+  // Add the first decision if it adds info beyond the goal
   if (decisions.length > 0) {
     const decision = cleanText(decisions[0], 120);
-    if (decision && decision !== focus) parts.push(`Decision: ${decision}`);
+    if (decision) parts.push(decision);
   }
 
+  // Errors encountered
   if (errors.length > 0) {
     const error = cleanText(errors[0], 100);
-    if (error) parts.push(`Issue: ${error}`);
+    if (error) parts.push(`Encountered: ${error}`);
   }
 
+  // Validation results
   if (validation.length > 0) {
     parts.push(`Validation: ${validation.slice(0, 2).join("; ")}`);
+  }
+
+  // Goal as context only if no actions were captured
+  if (parts.length === 0 && goal) {
+    parts.push(outcome === "completed" ? sentenceCase(conciseGoal(goal) ?? goal) : `Goal: ${sentenceCase(conciseGoal(goal) ?? goal)}`);
   }
 
   const joined = parts.join(". ").replace(/\.+/g, ".");
@@ -367,30 +374,30 @@ export function generateDigest(
     let tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
 
     if (tokens > BUDGET) {
-      decisions = decisions.slice(0, 5).map(d => d.length > 120 ? d.slice(0, 120) + "…" : d);
-      errors = errors.slice(0, 3).map(e => e.length > 120 ? e.slice(0, 120) + "…" : e);
+      decisions = decisions.slice(0, 5).map(d => d.length > 160 ? d.slice(0, 159).replace(/\s+\S*$/, "") + "…" : d);
+      errors = errors.slice(0, 3).map(e => e.length > 160 ? e.slice(0, 159).replace(/\s+\S*$/, "") + "…" : e);
       files = files.slice(0, 10);
       validation = validation.slice(0, 5);
       keywords = keywords.slice(0, 10);
       work = work.slice(0, 3);
-      facts = compactFacts(facts, 12, 120);
+      facts = compactFacts(facts, 12, 150);
       summary = buildSummary(goalStr, files, work, decisions, errors, validation, outcome);
       tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
 
       if (tokens > BUDGET) {
-        goalStr = goalStr.length > 150 ? goalStr.slice(0, 149) + "…" : goalStr;
-        decisions = decisions.slice(0, 3).map(d => d.length > 80 ? d.slice(0, 80) + "…" : d);
-        errors = errors.slice(0, 2).map(e => e.length > 80 ? e.slice(0, 80) + "…" : e);
+        goalStr = goalStr.length > 180 ? goalStr.slice(0, 179).replace(/\s+\S*$/, "") + "…" : goalStr;
+        decisions = decisions.slice(0, 3).map(d => d.length > 120 ? d.slice(0, 119).replace(/\s+\S*$/, "") + "…" : d);
+        errors = errors.slice(0, 2).map(e => e.length > 120 ? e.slice(0, 119).replace(/\s+\S*$/, "") + "…" : e);
         validation = validation.slice(0, 3);
         keywords = keywords.slice(0, 6);
-        facts = compactFacts(facts, 8, 80);
+        facts = compactFacts(facts, 8, 100);
         summary = summary ? cleanText(summary, 180) : summary;
         summary = buildSummary(goalStr, files, work, decisions, errors, validation, outcome);
         tokens = estimateTokens(makeDraft(goalStr, summary, files, decisions, errors, validation, keywords));
       }
 
       if (tokens > BUDGET) {
-        facts = compactFacts(facts, 5, 60);
+        facts = compactFacts(facts, 5, 80);
         validation = validation.slice(0, 2);
         decisions = decisions.slice(0, 2);
         errors = errors.slice(0, 1);
