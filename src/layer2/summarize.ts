@@ -7,9 +7,17 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Layer1Output } from "../types/index.js";
 
 let client: Anthropic | null = null;
+let warnedNoKey = false;
 
 function getClient(): Anthropic | null {
-  if (!process.env["ANTHROPIC_API_KEY"]) return null;
+  if (!process.env["ANTHROPIC_API_KEY"]) {
+    if (!warnedNoKey) {
+      console.error("[ctx-memory] ANTHROPIC_API_KEY not set — using heuristic digest (no AI summarization).");
+      console.error("[ctx-memory] Set ANTHROPIC_API_KEY for higher-quality session digests.");
+      warnedNoKey = true;
+    }
+    return null;
+  }
   if (!client) client = new Anthropic();
   return client;
 }
