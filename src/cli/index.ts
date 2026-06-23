@@ -108,16 +108,18 @@ export function injectPathLine(shellRcPath: string): boolean {
 
 /**
  * Registers the ctx-memory MCP server with Claude Code using `claude mcp add`.
- * Idempotent: removes existing entry first (claude mcp add --scope user).
+ * Idempotent: removes existing entry first.
  */
 function registerClaudeMcp(receiverPath: string): void {
   const mcpScript = path.resolve(path.dirname(receiverPath), "../mcp/index.js");
   try {
-    // Remove existing registration (ignore errors if not registered yet)
-    try {
-      execFileSync("claude", ["mcp", "remove", APP_NAME, "--scope", "user"], { stdio: "pipe" });
-    } catch {
-      // not registered yet
+    // Remove existing registration (try both scope variants)
+    for (const scope of ["user", "local"]) {
+      try {
+        execFileSync("claude", ["mcp", "remove", APP_NAME, "--scope", scope], { stdio: "pipe" });
+      } catch {
+        // not registered at this scope
+      }
     }
     try {
       execFileSync("claude", ["mcp", "remove", LEGACY_APP_NAME, "--scope", "user"], { stdio: "pipe" });
@@ -130,9 +132,9 @@ function registerClaudeMcp(receiverPath: string): void {
       { stdio: "pipe" }
     );
   } catch {
-    // Non-fatal: user can register manually
-    console.warn("  Warning: could not auto-register MCP server. Run manually:");
-    console.warn(`    claude mcp add --scope user ${APP_NAME} -- ${process.execPath} ${mcpScript}`);
+    // Non-fatal: the wrapper injects --mcp-config at runtime anyway
+    console.warn("  Warning: could not auto-register MCP server (non-fatal — wrapper uses --mcp-config).");
+    console.warn(`    To register manually: claude mcp add --scope user ${APP_NAME} -- ${process.execPath} ${mcpScript}`);
   }
 }
 
@@ -355,7 +357,10 @@ async function main(): Promise<void> {
   }
 
   if (cmd === "setup") {
-    await runSetup();
+    const yes = args.includes("--yes") || args.includes("-y") || args.includes("--non-interactive");
+    const toolsFlagIdx = args.indexOf("--tools");
+    const toolsFlag = toolsFlagIdx >= 0 ? args[toolsFlagIdx + 1] : undefined;
+    await runSetup({ yes, toolsFlag });
     return;
   }
 
@@ -389,7 +394,7 @@ function printHelp(): void {
   console.log(`ctx-memory — persistent memory for LLM coding agents
 
 Commands:
-  setup                          Interactive setup wizard
+  setup [--yes] [--tools claude-code,codex]  Interactive setup wizard (--yes = non-interactive)
   status                         Show current configuration and stats
   projects list                  List all projects
   projects show <name>           Show project memory doc
@@ -400,8 +405,8 @@ Commands:
 
 // ─── setup ───────────────────────────────────────────────────────────────────
 
-async function runSetup(): Promise<void> {
-  const { checkbox, confirm } = await import("@inquirer/prompts");
+async function runSetup(opts: { yes?: boolean; toolsFlag?: string } = {}): Promise<void> {
+  const { yes = false, toolsFlag } = opts;
 
   const pathDirs = (process.env["PATH"] ?? "").split(":");
   const detected = detectInstalledTools(pathDirs);
@@ -412,20 +417,40 @@ async function runSetup(): Promise<void> {
     return;
   }
 
-  const selected = await checkbox({
-    message: "Which tools do you want ctx-memory to integrate with?",
-    choices: detected.map((t) => ({ name: t, value: t, checked: true })),
-  }) as ToolName[];
+  let selected: ToolName[];
+  let storeRaw: boolean;
 
-  if (selected.length === 0) {
-    console.log("No tools selected. Nothing to do.");
-    return;
+  if (yes) {
+    // Non-interactive: use --tools flag if provided, otherwise all detected tools
+    if (toolsFlag) {
+      const requested = toolsFlag.split(",").map((t) => t.trim()) as ToolName[];
+      selected = detected.filter((t) => requested.includes(t));
+      if (selected.length === 0) {
+        console.error(`No requested tools found in PATH. Available: ${detected.join(", ")}`);
+        process.exit(1);
+      }
+    } else {
+      selected = detected;
+    }
+    storeRaw = false;
+    console.log(`Non-interactive setup: ${selected.join(", ")}, raw messages: off`);
+  } else {
+    const { checkbox, confirm } = await import("@inquirer/prompts");
+    selected = await checkbox({
+      message: "Which tools do you want ctx-memory to integrate with?",
+      choices: detected.map((t) => ({ name: t, value: t, checked: true })),
+    }) as ToolName[];
+
+    if (selected.length === 0) {
+      console.log("No tools selected. Nothing to do.");
+      return;
+    }
+
+    storeRaw = await confirm({
+      message: "Store raw messages? (uses more space, off by default)",
+      default: false,
+    });
   }
-
-  const storeRaw = await confirm({
-    message: "Store raw messages? (uses more space, off by default)",
-    default: false,
-  });
 
   // Ensure ~/.ctx-memory/bin exists
   const ctxBin = path.join(homedir(), ".ctx-memory", "bin");
@@ -484,6 +509,37 @@ async function runSetup(): Promise<void> {
     console.log('  Run: source ~/.bashrc   (or restart your shell)');
   }
   console.log(`  Raw messages: ${storeRaw ? "on" : "off"}`);
+
+  // Verification: check symlinks exist
+  const symlinksOk = ["hook-receiver", "session-start", ...results.map((t) => TOOL_BINARY[t as ToolName])];
+  const broken: string[] = [];
+  for (const name of symlinksOk) {
+    const linkPath = path.join(ctxBin, name);
+    try {
+      const target = fs.readlinkSync(linkPath);
+      if (!fs.existsSync(target)) broken.push(`${name} -> ${target} (target missing)`);
+    } catch {
+      broken.push(`${name} (symlink missing)`);
+    }
+  }
+  if (broken.length > 0) {
+    console.log("\n  ⚠ Warning: broken symlinks:");
+    for (const b of broken) console.log(`    ${b}`);
+  }
+
+  // Verify MCP registration for Claude
+  if (results.includes("claude-code")) {
+    try {
+      const output = execFileSync("claude", ["mcp", "list"], { stdio: ["pipe", "pipe", "pipe"], encoding: "utf8" });
+      if (output.includes(APP_NAME)) {
+        console.log(`\n  ✓ MCP server "${APP_NAME}" verified in Claude Code`);
+      } else {
+        console.log(`\n  ⚠ MCP server "${APP_NAME}" not found in 'claude mcp list'`);
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
 }
 
 // ─── status ───────────────────────────────────────────────────────────────────
