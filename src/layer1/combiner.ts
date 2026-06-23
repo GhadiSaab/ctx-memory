@@ -29,6 +29,7 @@ const TRANSIENT_DECISION_RE = /\b(?:i'?ll check|i'?ll inspect|i am going to|i'?m
 const ERROR_LINE_RE = /\b(error|failed|failure|exception|traceback|typeerror|syntaxerror|referenceerror|enoent|eacces|econnrefused|cannot find|module not found|permission denied|timed out|timeout|crash(?:ed)?)\b/i;
 const SCRATCH_WORK_RE = /\b(now i need|now let me|let me|i'?ll update|i'?ll add|i need to update|also add a test|next i|i should|need to cover|base directory for this skill|#\s+\w+)/i;
 const SCAFFOLDING_RE = /\b(?:superpowers:[\w-]+|using tdd|test-driven[- ]development|red green refactor|red phase|green phase|refactor phase|\*\*red\*\*|\*\*green\*\*|\*\*refactor\*\*)\b/i;
+const PLUGIN_INJECTION_RE = /\b(?:base directory for this skill|the terminal state is invoking|do not in\w*|brainstorming ideas into designs|help turn ideas into|before asking detailed questions|assess scope|if the requ)\b/i;
 const SESSION_OBSERVATION_RE = /\b(?:bug|issue|error|test|build)\s+(?:must have|appears to have|seems to have|was already|is already|had been)\b|\bmust have been fixed\b/i;
 const PRESENTATION_HEADER_RE = /^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*$/i;
 const IMPLEMENTATION_RE = /\b(implemented|added|updated|fixed|changed|created|wired|handled|guarded|parsed|introduced|refactored|modified)\b/i;
@@ -65,11 +66,16 @@ function cleanSnippet(content: string, max = 160): string | null {
     .replace(/\s+/g, " ")
     .trim();
   if (!cleaned) return null;
-  return cleaned.length > max ? cleaned.slice(0, max - 1).trimEnd() + "…" : cleaned;
+  if (cleaned.length <= max) return cleaned;
+  // Try to cut at a word boundary to avoid mid-word truncation
+  const cut = cleaned.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const truncated = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return truncated.trimEnd() + "…";
 }
 
 function cleanDecisionCandidate(content: string): string | null {
-  const cleaned = cleanSnippet(content, 180);
+  const cleaned = cleanSnippet(content, 200);
   if (!cleaned) return null;
   const stripped = cleaned
     .replace(/^(?:here(?:'|’)s|here is)\s+(?:what\s+)?(?:changed|i changed|was changed|the fix|the summary)\s*:?\s*/i, "")
@@ -130,6 +136,7 @@ function classifyDecision(text: string): DecisionCategory {
 function isDecisionLike(text: string): boolean {
   if (MEMORY_LOOKUP_RE.test(text)) return false;
   if (SCAFFOLDING_RE.test(text)) return false;
+  if (PLUGIN_INJECTION_RE.test(text)) return false;
   if (SESSION_OBSERVATION_RE.test(text)) return false;
   if (PRESENTATION_HEADER_RE.test(text.trim())) return false;
   if (SCRATCH_WORK_RE.test(text)) return false;
@@ -196,7 +203,9 @@ function extractDecisionCandidates(messages: WeightedMessage[], patternDecisions
   for (const m of messages) {
     if (m.type === "decision") add(extractDecisionSnippet(m.message.content));
 
-    if (m.message.role !== "assistant") continue;
+    // Scan both user and assistant messages for decision-like statements.
+    // User messages often state the tech stack ("We are building X using React
+    // and TypeScript") which is valuable architecture context.
     const segments = m.message.content.split(/(?<=[.!?])\s+|\n+/);
     for (const segment of segments) {
       const trimmed = segment.trim();
