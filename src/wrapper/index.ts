@@ -115,7 +115,11 @@ async function signalSessionEnd(
   // not conversation messages). Also fill in events if hooks captured nothing.
   if ((tool as string) === "claude") {
     const claudeData = readClaudeSession(cwd, sessionId, sessionStartMs);
-    if (claudeData) seedPostHocSession(sessionId, claudeData);
+    if (claudeData) {
+      seedPostHocSession(sessionId, claudeData);
+    } else {
+      console.error(`[ctx-memory] Warning: no Claude JSONL data found for session ${sessionId}`);
+    }
   }
 
   // For OpenCode: read its local SQLite store post-hoc.
@@ -132,12 +136,13 @@ async function signalSessionEnd(
   }
 
   // Minimum viable session guard: skip trivial sessions (no buffered data and very short)
+  // but only if the session was NOT completed — a completed -p session is useful even if short.
   const session = getSessionById(sessionId as UUID);
   if (session) {
     const durationSeconds = Math.round((Date.now() - session.started_at) / 1000);
     const eventCount = countStoredEvents(sessionId);
     const hasBufferedData = getMessageBuffer(sessionId).length > 0 || getEventBuffer(sessionId).length > 0;
-    if (!hasBufferedData && eventCount === 0 && durationSeconds < 30) {
+    if (!hasBufferedData && eventCount === 0 && durationSeconds < 30 && outcome !== "completed") {
       try { deleteSession(sessionId as UUID); } catch { /* best-effort */ }
       return;
     }
@@ -176,6 +181,8 @@ function injectMarkdownContext(filePath: string, projectId: string): void {
   const injected =
     AGENTS_MD_HEADER +
     "# Project Memory (from previous sessions)\n\n" +
+    "The following context was captured automatically from previous coding sessions.\n" +
+    "Use it as background knowledge — it is not part of the current conversation.\n\n" +
     project.memory_doc.trim() +
     "\n<!-- /ctx-memory -->" +
     existing;
