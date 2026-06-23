@@ -13,6 +13,12 @@ import { randomUUID } from "node:crypto";
 
 const TRANSIENT_DECISION_PREFIX = /^(got it|i('|’)ll|i will|i('|’)m|i am|we('|’)ll|we will|let('|’)s|use the|maybe|please|can you|help me|i want|i need|now|next)\b/i;
 const TRANSIENT_MEMORY_RE = /\b(?:mcp tool|get_project_memory|retrieve the project memory|store that message|use llm memory|get memory mcp|have the context)\b/i;
+const PLUGIN_INJECTION_RE = /\b(?:base directory for this skill|the terminal state is invoking|brainstorming ideas into designs|help turn ideas into|before asking detailed questions|assess scope|if the requ|cover: architecture|mockups, diagrams|comparisons in a browser|that'?s the (extent|full picture|extent of)|want me to (explore|look))\b/i;
+const COMMIT_MSG_RE = /\b(?:committed|commit\s+(?:as|with)|git commit|feat:|fix:|chore:|refactor:)\b/i;
+const MARKDOWN_NOISE_RE = /(?:^\*\*|`[a-f0-9]{7,}`|tsconfig\.|vite-env)/i;
+const PROCESS_DESCRIPTION_RE = /\b(?:scaffolding|scaffolded|setting up|configuring|building the|creating the|writing the|implementing the)\b/i;
+const NARRATIVE_NOISE_RE = /\b(?:so it'?s|that'?s the|no test framework is configured|i'?ll proceed|some form of|testing mock|architecture matches|feature descriptions|prior session|previous session|session context|from the|from prior)\b/i;
+const SCRATCH_WORK_RE = /\b(?:i'?ll use|i(?:'|')?ll scaffold|let me move|i need to|now i'?ll|now i need|let me check|let me create|i'll use --force|temp location and merge|prior session)\b/i;
 const PROCESS_ONLY_RE = /\b(?:update|updated|add|added|run|make|fix|cover|match)\b.*\b(?:test|tests|coverage|validation)\b|\b(?:test|tests|coverage|validation)\b.*\b(?:update|updated|add|added|run|make|fix|cover|match)\b/i;
 const TEST_COMMAND_FILTER_RE = /(?:2>&1|\|\s*(?:tail|head)\b|--runInBand\b|--watch=false\b)\s*(?:-\d+|\d+)?/g;
 const TEST_RESULT_RE = /\s+(passed|failed)$/i;
@@ -47,6 +53,7 @@ function isUsefulConvention(decision: string): boolean {
   if (trimmed.length < 8 || trimmed.length > 220) return false;
   return !TRANSIENT_DECISION_PREFIX.test(trimmed) &&
     !TRANSIENT_MEMORY_RE.test(trimmed) &&
+    !PLUGIN_INJECTION_RE.test(trimmed) &&
     !PRESENTATION_HEADER_RE.test(trimmed) &&
     !SCAFFOLDING_RE.test(trimmed);
 }
@@ -64,11 +71,15 @@ function isUsefulRecentSummary(summary: string, digest: Layer2Digest): boolean {
   const lower = trimmed.toLowerCase();
   if (trimmed.length < 6 || trimmed.length > 280) return false;
   if (TRANSIENT_MEMORY_RE.test(trimmed)) return false;
-  if (/^(what mcps do you have|no goal detected)$/i.test(trimmed)) return false;
+  if (PLUGIN_INJECTION_RE.test(trimmed) || PRESENTATION_HEADER_RE.test(trimmed) || NARRATIVE_NOISE_RE.test(trimmed)) return false;
+  if (/^(what mcps do you have|no goal detected|here'|here is|here's what)/i.test(trimmed)) return false;
+  // Skip summaries that are just the goal with no actual work done
   if (digest.files_modified.length === 0 && digest.validation.length === 0 && digest.errors_encountered.length === 0) {
     const goal = digest.goal?.trim().toLowerCase();
-    if (goal && goal === lower) return false;
+    if (goal && (goal === lower || goal.includes(lower) || lower.includes(goal))) return false;
   }
+  // Skip summaries that are just questions (no productive content)
+  if (digest.files_modified.length === 0 && digest.decisions.length === 0 && trimmed.endsWith("?")) return false;
   return true;
 }
 
@@ -199,6 +210,21 @@ function cleanupArchitectureObject(value: string): string {
 }
 
 function normalizeArchitectureFact(fact: MemoryFact): MemoryFact | null {
+  // For raw notes, skip subject/object parsing — just validate domain terms.
+  if (fact.relation === "note" || !fact.subject) {
+    const object = fact.object.replace(/\s+/g, " ").trim();
+    if (!object) return null;
+    const evidenceText = fact.evidence.map((e) => e.text).join(" ");
+    const combined = `${object} ${evidenceText}`;
+    if (TRANSIENT_MEMORY_RE.test(combined) || PLUGIN_INJECTION_RE.test(combined) || PRESENTATION_HEADER_RE.test(object) || SCAFFOLDING_RE.test(combined)) return null;
+    if (COMMIT_MSG_RE.test(combined) || MARKDOWN_NOISE_RE.test(combined) || PROCESS_DESCRIPTION_RE.test(combined) || SCRATCH_WORK_RE.test(combined) || NARRATIVE_NOISE_RE.test(combined)) return null;
+    if (TRANSIENT_DECISION_PREFIX.test(combined)) return null;
+    if (PROCESS_ONLY_RE.test(combined) && !TEST_HARNESS_ARCH_RE.test(combined)) return null;
+    if (ARCH_FILE_ARTIFACT_RE.test(object)) return null;
+    if (!DURABLE_ARCH_DOMAIN_RE.test(combined)) return null;
+    return { ...fact, object };
+  }
+
   let subject = fact.subject.replace(/\s+/g, " ").trim();
   let object = cleanupArchitectureObject(fact.object);
   if (!subject || !object) return null;
@@ -247,7 +273,9 @@ function architectureFactsFromText(
   if (
     stripped.length < 12 ||
     stripped.length > 220 ||
-    TRANSIENT_MEMORY_RE.test(text)
+    TRANSIENT_MEMORY_RE.test(text) ||
+    TRANSIENT_DECISION_PREFIX.test(text) ||
+    PLUGIN_INJECTION_RE.test(text)
   ) {
     return [];
   }
@@ -268,53 +296,17 @@ function architectureFactsFromText(
       });
       continue;
     }
-    const forMatch = clause.match(/^(.+?)\s+for\s+(.+)$/i);
-    const asMatch = clause.match(/^(.+?)\s+as\s+(.+)$/i);
-    const isMatch = clause.match(/^(.+?)\s+is\s+(.+)$/i);
-    const withMatch = clause.match(/^(.+?)\s+with\s+(.+)$/i);
-    const insteadMatch = clause.match(/^(.+?)\s+instead\s+of\s+(.+)$/i);
-    const strategyMatch = clause.match(/^(.+?)\s+is\s+(?:the\s+)?(.+?\s+strategy)$/i);
-
-    let subject: string;
-    let object: string;
-
-    if (forMatch) {
-      object = forMatch[1]!.trim();
-      subject = forMatch[2]!.trim();
-    } else if (asMatch) {
-      object = asMatch[1]!.trim();
-      subject = asMatch[2]!.trim();
-    } else if (strategyMatch) {
-      object = strategyMatch[1]!.trim();
-      subject = strategyMatch[2]!.trim();
-    } else if (isMatch) {
-      object = isMatch[1]!.trim();
-      subject = isMatch[2]!.trim();
-    } else if (withMatch) {
-      object = withMatch[1]!.trim();
-      subject = withMatch[2]!.trim();
-    } else if (insteadMatch) {
-      object = `${insteadMatch[1]!.trim()} instead of ${insteadMatch[2]!.trim()}`;
-      subject = inferArchitectureSubject(clause, object);
-    } else {
-      object = clause.trim();
-      subject = inferArchitectureSubject(clause, object);
-    }
-
-    object = object
+    // No clear "X uses Y" pattern — store as a raw architecture note
+    // rather than mangling it into a nonsensical triple.
+    const object = clause
       .replace(/^(the|a|an)\s+/i, "")
       .replace(/\s+/g, " ")
       .trim();
-    subject = subject
-      .replace(/^(the|a|an)\s+/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!subject || !object) continue;
+    if (!object || object.length < 12) continue;
     out.push({
       kind: "architecture",
-      subject,
-      relation: "uses",
+      subject: "",
+      relation: "note",
       object,
       confidence: fact.confidence,
       status: "active",
@@ -380,7 +372,19 @@ function factIdentity(fact: MemoryFact): string {
   return `${fact.kind}:${fact.subject.toLowerCase()}:${fact.relation}:${fact.object.toLowerCase()}`;
 }
 
+function tokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 2);
+}
+
 function renderArchitectureFact(fact: MemoryFact): string {
+  // For raw notes (no subject, relation "note"), just show the text.
+  if (fact.relation === "note" || !fact.subject) {
+    return fact.object.endsWith(".") ? fact.object : fact.object + ".";
+  }
   const subjectLower = fact.subject.toLowerCase();
   const relation = subjectLower.endsWith("s") && !subjectLower.endsWith("ss") && fact.relation === "uses"
     ? "use"
@@ -391,7 +395,9 @@ function renderArchitectureFact(fact: MemoryFact): string {
 function cleanExistingArchitectureLine(line: string): string | null {
   const cleaned = line.trim();
   if (!cleaned || cleaned === "_No architecture notes yet._") return null;
-  if (TRANSIENT_MEMORY_RE.test(cleaned) || SCAFFOLDING_RE.test(cleaned) || PRESENTATION_HEADER_RE.test(cleaned)) return null;
+  if (TRANSIENT_MEMORY_RE.test(cleaned) || PLUGIN_INJECTION_RE.test(cleaned) || SCAFFOLDING_RE.test(cleaned) || PRESENTATION_HEADER_RE.test(cleaned)) return null;
+  if (COMMIT_MSG_RE.test(cleaned) || MARKDOWN_NOISE_RE.test(cleaned) || PROCESS_DESCRIPTION_RE.test(cleaned) || SCRATCH_WORK_RE.test(cleaned) || NARRATIVE_NOISE_RE.test(cleaned)) return null;
+  if (TRANSIENT_DECISION_PREFIX.test(cleaned)) return null;
 
   const rendered = renderedArchitectureParts(cleaned);
   if (/^(?:architecture\s+uses?|use|switched)\b/i.test(cleaned) || rendered) {
@@ -408,6 +414,8 @@ function cleanExistingArchitectureLine(line: string): string | null {
     return normalized ? renderArchitectureFact(normalized) : null;
   }
 
+  // For raw notes, validate through normalizeArchitectureFact
+  if (!DURABLE_ARCH_DOMAIN_RE.test(cleaned)) return null;
   if (ARCH_FILE_ARTIFACT_RE.test(cleaned) && !TEST_HARNESS_ARCH_RE.test(cleaned)) return null;
   return cleaned;
 }
@@ -549,6 +557,8 @@ export function mergeIntoProjectMemory(
     .filter((line): line is string => line !== null);
   const archLines = [...existingLines];
   const archSet = new Set(archLines.map((line) => line.toLowerCase()));
+  // Also track token sets for fuzzy dedup — avoids near-duplicate architecture notes
+  const archTokenSets = archLines.map((line) => new Set(tokens(line.toLowerCase())));
   const promotedArchKeys = new Set<string>();
   for (const fact of promotedFacts.filter((f) => f.kind === "architecture")) {
     const normalized = normalizeArchitectureFact(fact);
@@ -558,10 +568,20 @@ export function mergeIntoProjectMemory(
     promotedArchKeys.add(key);
     const line = renderArchitectureFact(normalized);
     const renderedKey = line.toLowerCase();
-    if (!archSet.has(renderedKey)) {
-      archLines.push(line);
-      archSet.add(renderedKey);
+    if (archSet.has(renderedKey)) continue;
+    // Fuzzy dedup: if >70% token overlap with an existing line, skip
+    const newTokens = new Set(tokens(renderedKey));
+    if (newTokens.size > 0) {
+      const isDuplicate = archTokenSets.some((existing) => {
+        const intersection = [...newTokens].filter((t) => existing.has(t)).length;
+        const union = new Set([...existing, ...newTokens]).size;
+        return union > 0 && intersection / union > 0.7;
+      });
+      if (isDuplicate) continue;
     }
+    archLines.push(line);
+    archSet.add(renderedKey);
+    archTokenSets.push(newTokens);
   }
   const architecture = archLines.join("\n");
 
