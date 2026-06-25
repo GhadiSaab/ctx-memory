@@ -327,8 +327,9 @@ function buildSummary(
 export function generateDigest(
   layer1: Layer1Output,
   outcome: SessionOutcome,
-  exitCode: number | null
+  _exitCode: number | null
 ): Layer2Digest {
+  // _exitCode is intentionally unused — digest depends on layer1 output and outcome
   try {
     // goal
     // files_modified — deduplicated paths from file_created | file_modified events

@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { db, getConfigValue, setConfigValue } from "../db/index.js";
+import { db, setConfigValue } from "../db/index.js";
 import { writeClaudeHooks, writeGeminiHooks, writeOpenCodeHooks } from "../hooks/index.js";
 import type { UUID, ToolName } from "../types/index.js";
 

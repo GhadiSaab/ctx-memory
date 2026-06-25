@@ -204,8 +204,7 @@ describe("isShortConfirmation", () => {
 
   it("is true when trimmed content length is 29 chars and matches pattern", () => {
     // threshold is < 30: 29 chars qualifies
-    const content = "looks good" + " ".repeat(19); // 29 chars trimmed = "looks good" = 10, needs a valid phrase
-    // use a 29-char-or-less phrase that matches RE_SHORT_CONFIRMATION
+    // use a short phrase that matches RE_SHORT_CONFIRMATION
     const s29 = "yes"; // 3 chars, well under 30
     expect(extractStructuralFeatures(msg(s29, "user"), 0, 1).isShortConfirmation).toBe(true);
   });
@@ -213,7 +212,6 @@ describe("isShortConfirmation", () => {
   it("is false when trimmed content length is exactly 30 chars (threshold is strictly < 30)", () => {
     // 30 chars exactly: "x".repeat(30) — won't match pattern anyway, but length check fails first
     // Use a valid-ish phrase padded to exactly 30 chars
-    const s30 = "yes" + " ".repeat(27); // trimmed = "yes" = 3 < 30, still true — need raw length
     // content.trim().length < 30: trim removes whitespace, so pad inside word
     const exact30 = "a".repeat(30); // 30 chars, not a confirmation word
     expect(extractStructuralFeatures(msg(exact30, "user"), 0, 1).isShortConfirmation).toBe(false);
