@@ -35,9 +35,9 @@ Step 18 ✅  Per-tool hook plugins — src/hooks/{receiver,claude,gemini,opencod
 Step 19 ✅  CLI wizard — src/cli/index.ts (detectInstalledTools, createWrapperSymlink, injectPathLine, forgetProject, getAllProjects + bin entry)
 ```
 
-**Phase 2** (after Phase 1 validated): shell wrappers per-tool, CLI wizard (`npm install -g`), per-tool hook plugins.
+**Phase 1 complete.** All 19 steps implemented and tested.
 
-**Validation gates before Phase 2:** Layer 1 weights make sense on real transcripts, digest is useful as context, project memory stays coherent across 5 sequential merges, MCP tools respond <10ms (search_context <50ms), orphan sweep works correctly.
+**Validation gates (met):** Layer 1 weights make sense on real transcripts, digest is useful as context, project memory stays coherent across 5 sequential merges, MCP tools respond <10ms (search_context <50ms), orphan sweep works correctly.
 
 ## Commands
 

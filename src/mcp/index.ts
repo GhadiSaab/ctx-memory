@@ -1,6 +1,10 @@
 // MCP server entrypoint — stdio transport for Claude Code integration.
 // All tool logic lives in handlers.ts; this file only wires up the MCP SDK.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -17,13 +21,15 @@ import {
   handleListSessions,
   handleSearchContext,
   handleEndSession,
-  getEventBuffer,
 } from "./handlers.js";
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
 
 const SESSION_ID = process.env["CTX_MEMORY_SESSION_ID"] ?? process.env["LLM_MEMORY_SESSION_ID"] ?? null;
 const PROJECT_ID = process.env["CTX_MEMORY_PROJECT_ID"] ?? process.env["LLM_MEMORY_PROJECT_ID"] ?? null;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"));
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +51,7 @@ loadEmbedder().catch((e) => {
 // ─── MCP server ───────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "ctx-memory", version: "1.0.0" },
+  { name: "ctx-memory", version: pkg.version },
   { capabilities: { tools: {} } }
 );
 

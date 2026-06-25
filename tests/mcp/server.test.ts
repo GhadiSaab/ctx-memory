@@ -23,7 +23,7 @@ import {
 } from "../../src/db/index.js";
 
 // Helper: cast handler result for property access in tests
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function r(v: unknown): any { return v; }
 
 beforeEach(() => {
@@ -125,7 +125,7 @@ describe("handleStoreEvent", () => {
   });
 
   it("returns an error object for invalid input without crashing", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const result = await handleStoreEvent({} as any);
     expect(result).toHaveProperty("error");
   });
@@ -279,7 +279,7 @@ describe("handleEndSession", () => {
   });
 
   it("returns an error for invalid input without crashing", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const result = await handleEndSession({} as any);
     expect(result).toHaveProperty("error");
   });
