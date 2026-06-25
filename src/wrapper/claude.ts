@@ -35,7 +35,8 @@ interface ToolUseBlock {
   input: Record<string, unknown>;
 }
 
-interface ToolResultBlock {
+// ToolResultBlock kept for future use — prefix _ to mark intentionally unused
+interface _ToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
   content: string | Array<{ type: string; text?: string }>;

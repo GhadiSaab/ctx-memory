@@ -1,10 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   resolveOutcome,
   findRealBinary,
   normalizeToolName,
-  injectCodexContext,
-  injectGeminiContext,
 } from "../../src/wrapper/index.js";
 import { clearDb } from "../db/helpers.js";
 
@@ -83,7 +81,7 @@ describe("findRealBinary", () => {
 
   it("tries all PATH entries before giving up", () => {
     let callCount = 0;
-    mockAccess.mockImplementation((p) => {
+    mockAccess.mockImplementation((_p) => {
       callCount++;
       if (callCount < 3) throw new Error("not found");
       // third call succeeds

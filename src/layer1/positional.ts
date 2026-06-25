@@ -18,6 +18,7 @@ export function analyzePosition(
   totalMessages: number,
   _role: MessageRole
 ): number {
+  // _role is intentionally unused — position scoring depends only on index
   if (index === 0) return 1.0;
   if (totalMessages > 0 && index >= totalMessages - 3) return 0.8;
   if (totalMessages > 0 && index / totalMessages < 0.1) return 0.7;
